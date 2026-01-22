@@ -1,0 +1,184 @@
+syntax = "proto3";
+
+option java_package = "com.github.damontecres.wholphin.preferences";
+option java_multiple_files = true;
+
+enum ShowNextUpWhen{
+  END_OF_PLAYBACK = 0;
+  DURING_CREDITS = 1;
+}
+
+enum SkipSegmentBehavior{
+  IGNORE = 0;
+  AUTO_SKIP = 1;
+  ASK_TO_SKIP = 2;
+}
+
+enum PrefContentScale{
+  FIT = 0;
+  NONE = 1;
+  CROP = 2;
+  FILL = 3;
+  Fill_WIDTH = 4;
+  FILL_HEIGHT = 5;
+}
+
+enum MediaExtensionStatus{
+  MES_FALLBACK = 0;
+  MES_PREFERRED = 1;
+  MES_DISABLED = 2;
+}
+
+enum PlayerBackend{
+  EXO_PLAYER = 0;
+  MPV = 1;
+}
+
+message MpvOptions{
+  bool enable_hardware_decoding = 1;
+  bool use_gpu_next = 2;
+}
+
+message PlaybackOverrides{
+  bool ac3_supported = 1;
+  bool downmix_stereo = 2;
+  bool direct_play_ass = 3;
+  bool direct_play_pgs = 4;
+  MediaExtensionStatus media_extensions_enabled = 5;
+  bool direct_play_dolby_vision_e_l = 6;
+  bool decode_av1 = 7;
+}
+
+message PlaybackPreferences {
+  int64 skip_forward_ms = 1;
+  int64 skip_back_ms = 2;
+  int64 controller_timeout_ms = 3;
+  int32 seek_bar_steps = 4;
+  bool show_debug_info = 5;
+  bool auto_play_next = 6;
+  int64 auto_play_next_delay_seconds = 7;
+  int64 skip_back_on_resume_seconds = 8;
+  int64 max_bitrate = 9;
+
+  SkipSegmentBehavior skip_intros = 10;
+  SkipSegmentBehavior skip_outros = 11;
+  SkipSegmentBehavior skip_commercials = 12;
+  SkipSegmentBehavior skip_recaps = 13;
+  SkipSegmentBehavior skip_previews = 14;
+
+  PlaybackOverrides overrides = 15;
+  int64 pass_out_protection_ms = 16;
+  PrefContentScale global_content_scale = 17;
+  ShowNextUpWhen show_next_up_when = 18;
+  bool one_click_pause = 19;
+  PlayerBackend player_backend = 20;
+  MpvOptions mpv_options = 21;
+  bool refresh_rate_switching = 22;
+  bool resolution_switching = 23;
+}
+
+message HomePagePreferences{
+  int32 max_items_per_row = 1;
+  bool enable_rewatching_next_up = 2;
+  bool combine_continue_next = 3;
+}
+
+enum ThemeSongVolume {
+  DISABLED = 0;
+  LOWEST = 1;
+  LOW = 2;
+  MEDIUM = 3;
+  HIGH = 4;
+  HIGHEST = 5;
+}
+
+enum AppThemeColors {
+  PURPLE = 0;
+  BLUE = 1;
+  GREEN = 2;
+  ORANGE = 3;
+  BOLD_BLUE = 4;
+  OLED_BLACK = 5;
+}
+
+enum EdgeStyle{
+  EDGE_NONE = 0;
+  EDGE_SOLID = 1;
+  EDGE_SHADOW = 2;
+}
+
+enum BackgroundStyle{
+  BG_NONE = 0;
+  BG_WRAP = 1;
+  BG_BOXED = 2;
+}
+
+message SubtitlePreferences{
+  int32 font_size = 1;
+  int32 font_color = 2;
+  int32 font_opacity = 3;
+  int32 edge_color = 4;
+  EdgeStyle edge_style = 5;
+  int32 background_color = 6;
+  int32 background_opacity = 7;
+  BackgroundStyle background_style = 8;
+  bool font_bold = 9;
+  bool font_italic = 10;
+  int32 margin = 11;
+  int32 edge_thickness = 12;
+}
+
+message LiveTvPreferences {
+  bool show_header = 1;
+  bool favorite_channels_at_beginning = 2;
+  bool sort_by_recently_watched = 3;
+  bool color_code_programs = 4;
+}
+
+message SyncPlayPreferences {
+  bool enable_syncplay = 1;
+  bool auto_join_last_group = 2;
+  string last_group_id = 3;
+  bool show_sync_indicator = 4;
+  int32 sync_threshold_ms = 5; // Max drift before resyncing (default: 500ms)
+}
+
+enum BackdropStyle{
+  BACKDROP_DYNAMIC_COLOR = 0;
+  BACKDROP_IMAGE_ONLY = 1;
+  BACKDROP_NONE = 2;
+}
+
+message InterfacePreferences {
+  ThemeSongVolume play_theme_songs = 1;
+  bool remember_selected_tab = 2;
+  map<string, int32> remembered_tabs = 3;
+  AppThemeColors app_theme_colors = 4;
+  bool nav_drawer_switch_on_focus = 5;
+  bool show_clock = 6;
+  SubtitlePreferences subtitles_preferences = 7;
+  LiveTvPreferences live_tv_preferences = 8;
+  BackdropStyle backdrop_style = 9;
+  SyncPlayPreferences syncplay_preferences = 10;
+}
+
+message AdvancedPreferences {
+  int64 image_disk_cache_size_bytes = 1;
+}
+
+message AppPreferences {
+  // The currently signed in server and user IDs, mostly for restoring a session
+  string current_server_id = 1;
+  string current_user_id = 2;
+
+  PlaybackPreferences playback_preferences = 3;
+  HomePagePreferences home_page_preferences = 4;
+  InterfacePreferences interface_preferences = 5;
+
+  bool auto_check_for_updates = 6;
+  string update_url = 7;
+  bool send_crash_reports = 8;
+  bool debug_logging = 9;
+  AdvancedPreferences advanced_preferences = 10;
+  bool sign_in_automatically = 11;
+}

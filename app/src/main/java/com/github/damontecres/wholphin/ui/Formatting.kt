@@ -1,0 +1,185 @@
+package com.github.damontecres.wholphin.ui
+
+import androidx.annotation.StringRes
+import androidx.compose.foundation.text.appendInlineContent
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.buildAnnotatedString
+import com.github.damontecres.wholphin.R
+import org.jellyfin.sdk.model.api.BaseItemDto
+import org.jellyfin.sdk.model.api.MediaSegmentType
+import timber.log.Timber
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeParseException
+import java.time.format.FormatStyle
+import java.util.Locale
+
+val TimeFormatter: DateTimeFormatter = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
+val DateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM d, yyyy")
+
+// TODO server returns in UTC, but sdk converts to local time
+// eg 2020-02-14T00:00:00.0000000Z => 2020-02-13T17:00:00 PT => Feb 13, 2020
+
+/**
+ * Format a [LocalDateTime] as `Aug 24, 2000`
+ */
+fun formatDateTime(dateTime: LocalDateTime): String = DateFormatter.format(dateTime)
+
+fun formatDate(dateTime: LocalDate): String = DateFormatter.format(dateTime)
+
+fun toLocalDate(date: String?): LocalDate? =
+    date?.let {
+        try {
+            LocalDate.parse(it)
+        } catch (_: DateTimeParseException) {
+            Timber.w("Could not parse date: %s", date)
+            null
+        }
+    }
+
+/**
+ * If the item has season & episode info, format as `S# E#`
+ */
+val BaseItemDto.seasonEpisode: String?
+    get() =
+        if (parentIndexNumber != null && indexNumber != null && indexNumberEnd != null) {
+            "S$parentIndexNumber E$indexNumber-E$indexNumberEnd"
+        } else if (parentIndexNumber != null && indexNumber != null) {
+            "S$parentIndexNumber E$indexNumber"
+        } else {
+            null
+        }
+
+/**
+ * If the item has season & episode info, format padded as `S## E##`
+ */
+val BaseItemDto.seasonEpisodePadded: String?
+    get() =
+        if (parentIndexNumber != null && indexNumber != null) {
+            val season = parentIndexNumber?.toString()?.padStart(2, '0')
+            val episode = indexNumber?.toString()?.padStart(2, '0')
+            val endEpisode = indexNumberEnd?.toString()?.padStart(2, '0')
+            if (endEpisode != null) {
+                "S${season}E$episode-E$endEpisode"
+            } else {
+                "S${season}E$episode"
+            }
+        } else {
+            null
+        }
+
+val BaseItemDto.seriesProductionYears: String?
+    get() =
+        if (productionYear != null) {
+            buildString {
+                append(productionYear.toString())
+                if (status == "Continuing") {
+                    append(" - ")
+                    append("Present")
+                } else if (status == "Ended") {
+                    endDate?.let {
+                        if (it.year != productionYear) {
+                            append(" - ")
+                            append(it.year)
+                        }
+                    }
+                }
+            }
+        } else {
+            null
+        }
+
+private val abbrevSuffixes = listOf("", "K", "M", "B")
+
+/**
+ * Format a number by abbreviation, eg 5533 => 5.5K
+ */
+fun abbreviateNumber(number: Int): String {
+    if (number < 1000) {
+        return number.toString()
+    }
+    var unit = 0
+    var count = number.toDouble()
+    while (count >= 1000 && unit + 1 < abbrevSuffixes.size) {
+        count /= 1000
+        unit++
+    }
+    return String.format(Locale.getDefault(), "%.1f%s", count, abbrevSuffixes[unit])
+}
+
+val byteSuffixes = listOf("B", "KB", "MB", "GB", "TB")
+val byteRateSuffixes = listOf("bps", "kbps", "mbps", "gbps", "tbps")
+
+/**
+ * Format bytes
+ */
+fun formatBytes(
+    bytes: Int,
+    suffixes: List<String> = byteSuffixes,
+) = formatBytes(bytes.toLong(), suffixes)
+
+fun formatBytes(
+    bytes: Long,
+    suffixes: List<String> = byteSuffixes,
+): String {
+    var unit = 0
+    var count = bytes.toDouble()
+    while (count >= 1024 && unit + 1 < suffixes.size) {
+        count /= 1024
+        unit++
+    }
+    return String.format(Locale.getDefault(), "%.2f%s", count, suffixes[unit])
+}
+
+@get:StringRes
+val MediaSegmentType.stringRes: Int
+    get() =
+        when (this) {
+            MediaSegmentType.UNKNOWN -> R.string.unknown
+            MediaSegmentType.COMMERCIAL -> R.string.commercial
+            MediaSegmentType.PREVIEW -> R.string.preview
+            MediaSegmentType.RECAP -> R.string.recap
+            MediaSegmentType.OUTRO -> R.string.outro
+            MediaSegmentType.INTRO -> R.string.intro
+        }
+
+@get:StringRes
+val MediaSegmentType.skipStringRes: Int
+    get() =
+        when (this) {
+            MediaSegmentType.UNKNOWN -> R.string.skip_segment_unknown
+            MediaSegmentType.COMMERCIAL -> R.string.skip_segment_commercial
+            MediaSegmentType.PREVIEW -> R.string.skip_segment_preview
+            MediaSegmentType.RECAP -> R.string.skip_segment_recap
+            MediaSegmentType.OUTRO -> R.string.skip_segment_outro
+            MediaSegmentType.INTRO -> R.string.skip_segment_intro
+        }
+
+fun AnnotatedString.Builder.dot() = append("  \u2022  ")
+
+fun listToDotString(
+    strings: List<String>,
+    communityRating: Float?,
+    criticRating: Float?,
+): AnnotatedString =
+    buildAnnotatedString {
+        strings.forEachIndexed { index, string ->
+            append(string)
+            if (index != strings.lastIndex) dot()
+            communityRating?.let {
+                dot()
+                append(String.format(Locale.getDefault(), "%.1f", it))
+                appendInlineContent(id = "star")
+            }
+            criticRating?.let {
+                dot()
+                append("${it.toInt()}%")
+                if (it >= 60f) {
+                    appendInlineContent(id = "fresh")
+                } else {
+                    appendInlineContent(id = "rotten")
+                }
+            }
+        }
+    }

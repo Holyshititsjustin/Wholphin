@@ -1,0 +1,576 @@
+<resources>
+    <string name="app_name" translatable="false">Wholphin</string>
+    <string name="app_name_long" translatable="false">Wholphin</string>
+
+    <string name="about">About</string>
+    <string name="active_recordings">Active Recordings</string>
+    <string name="add_favorite">Favorite</string>
+    <string name="add_server">Add Server</string>
+    <string name="add_user">Add User</string>
+    <string name="audio">Audio</string>
+    <string name="birthplace">Birthplace</string>
+    <string name="bitrate">Bitrate</string>
+    <string name="born">Born</string>
+    <string name="cancel_recording">Cancel Recording</string>
+    <string name="cancel_series_recording">Cancel Series Recording</string>
+    <string name="cancel">Cancel</string>
+    <string name="chapters">Chapters</string>
+    <string name="choose_stream">Choose %1$s</string>
+    <string name="clear_image_cache">Clear image cache</string>
+    <string name="collection">Collection</string>
+    <string name="collections">Collections</string>
+    <string name="commercial">Commercial</string>
+    <string name="community_rating">Community Rating</string>
+    <string name="compose_error_message_title">An error occurred! Press the button to send logs to your server.</string>
+    <string name="confirm">Confirm</string>
+    <string name="continue_watching">Continue watching</string>
+    <string name="critic_rating">Critic Rating</string>
+    <string name="decimal_seconds">%.1f seconds</string>
+    <string name="default_track">Default</string>
+    <string name="delete">Delete</string>
+    <string name="died">Died</string>
+    <string name="directed_by">Directed by %1$s</string>
+    <string name="director">Director</string>
+    <string name="disabled">Disabled</string>
+    <string name="discovered_servers">Discovered Servers</string>
+    <string name="download_and_update"><![CDATA[Download & Update]]></string>
+    <string name="downloading">Downloading…</string>
+    <string name="enabled">Enabled</string>
+    <string name="ends_at">Ends at %1$s</string>
+    <string name="enter_server_url">Enter Server IP or URL</string>
+    <string name="enter_server_address">Enter server address</string>
+    <string name="episodes">Episodes</string>
+    <string name="error_loading_collection">Error loading collection %1$s</string>
+    <string name="external_track">External</string>
+    <string name="favorites">Favorites</string>
+    <string name="file_size">Size</string>
+    <string name="forced_track">Forced</string>
+    <string name="genres">Genres</string>
+    <string name="go_to_series">Go to series</string>
+    <string name="go_to">Go To</string>
+    <string name="hide_controller_timeout">Hide playback controls</string>
+    <string name="hide_debug_info">Hide debug info</string>
+    <string name="hide">Hide</string>
+    <string name="home">Home</string>
+    <string name="immediate">Immediate</string>
+    <string name="intro">Intro</string>
+    <string name="jump_letters">#ABCDEFGHIJKLMNOPQRSTUVWXYZ</string>
+    <string name="library">Library</string>
+    <string name="license_info">License information</string>
+    <string name="live_tv">Live TV</string>
+    <string name="loading">Loading…</string>
+    <string name="mark_entire_series_as_played">Mark entire series as played?</string>
+    <string name="mark_entire_series_as_unplayed">Mark entire series as unplayed?</string>
+    <string name="mark_unwatched">Mark as unwatched</string>
+    <string name="mark_watched">Mark as watched</string>
+    <string name="max_bitrate">Max bitrate</string>
+    <string name="more_like_this">More like this</string>
+    <string name="more">More</string>
+    <string name="movies">Movies</string>
+    <string name="name">Name</string>
+    <string name="next_up">Next Up</string>
+    <string name="no_data">No data</string>
+    <string name="no_results">No results</string>
+    <string name="no_servers_found">No servers found</string>
+    <string name="no_scheduled_recordings">No scheduled recordings</string>
+    <string name="no_update_available">No update available</string>
+    <string name="none">None</string>
+    <string name="only_forced_subtitles">Only Forced Subtitles</string>
+    <string name="outro">Outro</string>
+    <string name="path">Path</string>
+    <string name="people">People</string>
+    <string name="play_count">Play Count</string>
+    <string name="play_from_here">Play from here</string>
+    <string name="play">Play</string>
+    <string name="playback_debug_info">Show playback debug info</string>
+    <string name="playback_speed">Playback Speed</string>
+    <string name="playback">Playback</string>
+    <string name="playlist">Playlist</string>
+    <string name="playlists">Playlists</string>
+    <string name="preview">Preview</string>
+    <string name="profile_specific_settings">User Profile Settings</string>
+    <string name="queue">Queue</string>
+    <string name="recap">Recap</string>
+    <string name="recently_added_in">Recently added in %1$s</string>
+    <string name="recently_added">Recently added</string>
+    <string name="recently_recorded">Recently Recorded</string>
+    <string name="recently_released">Recently Released</string>
+    <string name="recommended">Recommended</string>
+    <string name="record_program">Record Program</string>
+    <string name="record_series">Record Series</string>
+    <string name="remove_favorite">Unfavorite</string>
+    <string name="restart">Restart</string>
+    <string name="resume">Resume</string>
+    <string name="save">Save</string>
+    <string name="search_and_download"><![CDATA[Search & Download]]></string>
+    <string name="search">Search</string>
+    <string name="searching">Searching…</string>
+    <string name="voice_search">Voice search</string>
+    <string name="voice_starting">Starting</string>
+    <string name="voice_search_prompt">Speak to search</string>
+    <string name="processing">Processing</string>
+    <string name="press_back_to_cancel">Press back to cancel</string>
+    <string name="voice_error_audio">Audio recording error</string>
+    <string name="voice_error_client">Voice recognition error</string>
+    <string name="voice_error_permissions">Microphone permission required</string>
+    <string name="voice_error_network">Network error</string>
+    <string name="voice_error_network_timeout">Network timeout</string>
+    <string name="voice_error_no_match">No speech recognized</string>
+    <string name="voice_error_busy">Voice recognition busy</string>
+    <string name="voice_error_server">Server error</string>
+    <string name="voice_error_speech_timeout">No speech detected</string>
+    <string name="voice_error_unknown">Unknown error</string>
+    <string name="voice_error_start_failed">Failed to start voice recognition</string>
+    <string name="voice_error_timeout">Voice recognition timed out</string>
+    <string name="retry">Retry</string>
+    <string name="select_server">Select Server</string>
+    <string name="select_user">Select User</string>
+    <string name="show_debug_info">Show debug info</string>
+    <string name="show_next_up_when">Show next up</string>
+    <string name="show">Show</string>
+    <string name="shuffle">Shuffle</string>
+    <string name="skip">Skip</string>
+    <string name="sort_by_date_added">Date Added</string>
+    <string name="sort_by_date_episode_added">Date Episode Added</string>
+    <string name="sort_by_date_played">Date Played</string>
+    <string name="sort_by_date_released">Date Released</string>
+    <string name="sort_by_name">Name</string>
+    <string name="sort_by_random">Random</string>
+    <string name="studios">Studios</string>
+    <string name="submit">Submit</string>
+    <string name="subtitle_download_too_long">Download is taking a long time, you may need to restart playback</string>
+    <string name="subtitle">Subtitle</string>
+    <string name="subtitles">Subtitles</string>
+    <string name="suggestions">Suggestions</string>
+    <string name="switch_servers">Switch servers</string>
+    <string name="switch_user">Switch</string>
+    <string name="top_unwatched">Top Rated Unwatched</string>
+    <string name="trailer">Trailer</string>
+    <string name="trailers">Trailers</string>
+    <string name="tv_dvr_schedule">DVR Schedule</string>
+    <string name="tv_guide">Guide</string>
+    <string name="tv_season">Season</string>
+    <string name="tv_seasons">Seasons</string>
+    <string name="tv_shows">TV Shows</string>
+    <string name="ui_interface">Interface</string>
+    <string name="unknown">Unknown</string>
+    <string name="updates">Updates</string>
+    <string name="version">Version</string>
+    <string name="video_scale">Video Scale</string>
+    <string name="video">Video</string>
+    <string name="videos">Videos</string>
+    <string name="watch_live">Watch live</string>
+    <string name="years_old">%1$d years old</string>
+    <string name="play_with_transcoding">Play with transcoding</string>
+    <string name="media_information">Media Information</string>
+    <string name="show_clock">Show Clock</string>
+    <string name="aired_episode_order">Aired Episode Order</string>
+    <string name="create_playlist">Create new playlist</string>
+    <string name="add_to_playlist">Add to playlist</string>
+    <string name="one_click_pause">Pause with one click</string>
+    <string name="one_click_pause_summary_on">Press D-Pad center to pause/play</string>
+    <string name="italic_font">Italicize font</string>
+    <string name="font">Font</string>
+    <string name="background">Background</string>
+    <string name="success">Success</string>
+    <string name="official_rating">Parental Rating</string>
+    <string name="runtime_sort">Runtime</string>
+
+    <string name="extras">Extras</string>
+    <string name="other_extras">Other</string>
+    <string name="behind_the_scenes">Behind the Scenes</string>
+    <string name="theme_songs">Theme Songs</string>
+    <string name="theme_videos">Theme Videos</string>
+    <string name="clips">Clips</string>
+    <string name="deleted_scenes">Deleted Scenes</string>
+    <string name="interviews">Interviews</string>
+    <string name="scenes">Scenes</string>
+    <string name="samples">Samples</string>
+    <string name="featurettes">Featurettes</string>
+    <string name="shorts">Shorts</string>
+
+    <plurals name="trailers">
+        <item quantity="zero">Trailers</item>
+        <item quantity="one">Trailer</item>
+        <item quantity="other">Trailers</item>
+    </plurals>
+    <plurals name="other_extras">
+        <item quantity="zero">Other</item>
+        <item quantity="one">Other</item>
+        <item quantity="other">Other</item>
+    </plurals>
+    <plurals name="behind_the_scenes">
+        <item quantity="zero">Behind the scenes</item>
+        <item quantity="one">Behind the scenes</item>
+        <item quantity="other">Behind the scenes</item>
+    </plurals>
+    <plurals name="theme_songs">
+        <item quantity="zero">Theme songs</item>
+        <item quantity="one">Theme song</item>
+        <item quantity="other">Theme songs</item>
+    </plurals>
+    <plurals name="theme_videos">
+        <item quantity="zero">Theme videos</item>
+        <item quantity="one">Theme video</item>
+        <item quantity="other">Theme videos</item>
+    </plurals>
+    <plurals name="clips">
+        <item quantity="zero">Clips</item>
+        <item quantity="one">Clip</item>
+        <item quantity="other">Clips</item>
+    </plurals>
+    <plurals name="deleted_scenes">
+        <item quantity="zero">Deleted scenes</item>
+        <item quantity="one">Deleted scene</item>
+        <item quantity="other">Deleted scenes</item>
+    </plurals>
+    <plurals name="interviews">
+        <item quantity="zero">Interviews</item>
+        <item quantity="one">Interview</item>
+        <item quantity="other">Interviews</item>
+    </plurals>
+    <plurals name="scenes">
+        <item quantity="zero">Scenes</item>
+        <item quantity="one">Scene</item>
+        <item quantity="other">Scenes</item>
+    </plurals>
+    <plurals name="samples">
+        <item quantity="zero">Samples</item>
+        <item quantity="one">Sample</item>
+        <item quantity="other">Samples</item>
+    </plurals>
+    <plurals name="featurettes">
+        <item quantity="zero">Featurettes</item>
+        <item quantity="one">Featurette</item>
+        <item quantity="other">Featurettes</item>
+    </plurals>
+    <plurals name="shorts">
+        <item quantity="zero">Shorts</item>
+        <item quantity="one">Short</item>
+        <item quantity="other">Shorts</item>
+    </plurals>
+
+    <plurals name="downloads">
+        <item quantity="zero">%s downloads</item>
+        <item quantity="one">%s download</item>
+        <item quantity="other">%s downloads</item>
+    </plurals>
+    <plurals name="hours">
+        <item quantity="zero">%d hours</item>
+        <item quantity="one">%d hour</item>
+        <item quantity="other">%d hours</item>
+    </plurals>
+    <plurals name="items">
+        <item quantity="zero">%d items</item>
+        <item quantity="one">%d item</item>
+        <item quantity="other">%d items</item>
+    </plurals>
+    <plurals name="seconds">
+        <item quantity="zero">%d seconds</item>
+        <item quantity="one">%d second</item>
+        <item quantity="other">%d seconds</item>
+    </plurals>
+
+    <plurals name="movies">
+        <item quantity="zero">Movies</item>
+        <item quantity="one">Movie</item>
+        <item quantity="other">Movies</item>
+    </plurals>
+    <plurals name="tv_shows">
+        <item quantity="zero">TV Shows</item>
+        <item quantity="one">TV Show</item>
+        <item quantity="other">TV Shows</item>
+    </plurals>
+    <plurals name="people">
+        <item quantity="zero">People</item>
+        <item quantity="one">Person</item>
+        <item quantity="other">People</item>
+    </plurals>
+
+    <!-- Preferences/Setting specific strings -->
+    <string name="pref_key_update_last_check_threshold" translatable="false">preference.update.threshold</string>
+    <string name="pref_key_update_last_check" translatable="false">preference.update.lastTimestamp</string>
+
+    <string name="ac3_supported">Device supports AC3/Dolby Digital</string>
+    <string name="advanced_settings">Advanced Settings</string>
+    <string name="advanced_ui">Advanced UI</string>
+    <string name="app_theme">Application Theme</string>
+    <string name="auto_check_for_updates">Automatically check for updates</string>
+    <string name="auto_play_next_delay">Delay before playing next up</string>
+    <string name="auto_play_next">Auto play next up</string>
+    <string name="check_for_updates">Check for updates</string>
+    <string name="combine_continue_next_summary">Applies to TV Series only</string>
+    <string name="combine_continue_next"><![CDATA[Combine Continue Watching & Next Up]]></string>
+    <string name="direct_play_ass">Direct play ASS subtitles</string>
+    <string name="direct_play_pgs">Direct play PGS subtitles</string>
+    <string name="downmix_stereo">Always downmix to stereo</string>
+    <string name="ffmpeg_extension_pref">Use FFmpeg decoder module</string>
+    <string name="global_content_scale">Default content scale</string>
+    <string name="install_update">Install update</string>
+    <string name="installed_version">Installed version</string>
+    <string name="max_homepage_items">Max items on home page rows</string>
+    <string name="nav_drawer_pins_summary">Choose the default items to show, others will be hidden</string>
+    <string name="nav_drawer_pins">Customize Navigation Drawer Items</string>
+    <string name="nav_drawer_switch_on_focus_summary_off">Click to switch pages</string>
+    <string name="nav_drawer_switch_on_focus">Switch nav drawer pages on focus</string>
+    <string name="pass_out_protection">Passout Protection</string>
+    <string name="play_theme_music">Play theme music</string>
+    <string name="playback_overrides">Playback overrides</string>
+    <string name="remember_selected_tab">Remember selected tabs</string>
+    <string name="rewatch_next_up">Enable rewatching in next up</string>
+    <string name="seek_bar_steps">Seek bar steps</string>
+    <string name="send_app_logs_summary">Useful for debugging</string>
+    <string name="send_app_logs">Send app logs to current server</string>
+    <string name="send_crash_reports_summary">Will try to send to last connected server</string>
+    <string name="send_crash_reports">Send Crash Reports</string>
+    <string name="settings">Settings</string>
+    <string name="skip_back_on_resume_preference">Skip back when resuming playback</string>
+    <string name="skip_back_preference">Skip back</string>
+    <string name="skip_commercials_behavior">Skip commercials behavior</string>
+    <string name="skip_forward_preference">Skip forward</string>
+    <string name="skip_intro_behavior">Skip intro behavior</string>
+    <string name="skip_outro_behavior">Skip outro behavior</string>
+    <string name="skip_previews_behavior">Skip previews behavior</string>
+    <string name="skip_recap_behavior">Skip recap behavior</string>
+    <string name="update_available">Update available</string>
+    <string name="update_url_summary">URL used to check for app updates</string>
+    <string name="update_url">Update URL</string>
+    <string name="font_size">Font size</string>
+    <string name="font_color">Font color</string>
+    <string name="font_opacity">Font opacity</string>
+    <string name="edge_style">Edge style</string>
+    <string name="edge_color">Edge color</string>
+    <string name="background_opacity">Background opacity</string>
+    <string name="background_style">Background style</string>
+    <string name="subtitle_style">Subtitle style</string>
+    <string name="background_color">Background color</string>
+    <string name="reset">Reset</string>
+    <string name="bold_font">Bold font</string>
+
+    <string name="player_backend">Playback Backend</string>
+    <string name="mpv_hardware_decoding">MPV: Use hardware decoding</string>
+    <string name="disable_if_crash">Disable if you experience crashes</string>
+    <string name="mpv_options">MPV Options</string>
+    <string name="exoplayer_options">ExoPlayer Options</string>
+    <string name="skip_segment_unknown">Skip Segment</string>
+    <string name="skip_segment_commercial">Skip Ads</string>
+    <string name="skip_segment_preview">Skip Preview</string>
+    <string name="skip_segment_recap">Skip Recap</string>
+    <string name="skip_segment_outro">Skip Outro</string>
+    <string name="skip_segment_intro">Skip Intro</string>
+    <string name="played">Played</string>
+    <string name="filter">Filter</string>
+    <string name="year">Year</string>
+    <string name="decade">Decade</string>
+    <string name="remove">Remove</string>
+    <string name="dolby_vision">Dolby Vision</string>
+    <string name="dolby_atmos">Dolby Atmos</string>
+    <string name="mpv_use_gpu_next">MPV: Use gpu-next</string>
+    <string name="mpv_conf">Edit mpv.conf</string>
+    <string name="discard_change">Discard changes?</string>
+    <string name="subtitle_margin">Margin</string>
+    <string name="verbose_logging">Verbose logging</string>
+    <string name="enter_pin">Enter PIN</string>
+    <string name="sign_in_auto">Sign in automatically</string>
+    <string name="use_server_credentials">Login via server</string>
+    <string name="press_enter_to_confirm">Press center to confirm</string>
+    <string name="require_pin_code">Require PIN for profile</string>
+    <string name="confirm_pin">Confirm PIN</string>
+    <string name="incorrect">Incorrect</string>
+    <string name="pin_too_short">PIN must be 4 keys or longer</string>
+    <string name="will_remove_pin">Will remove PIN</string>
+    <string name="image_cache_size">Image disk cache size (MB)</string>
+    <string name="view_options">View options</string>
+    <string name="columns">Columns</string>
+    <string name="spacing">Spacing</string>
+    <string name="aspect_ratio">Aspect Ratio</string>
+    <string name="show_details">Show details</string>
+    <string name="image_type">Image type</string>
+    <string name="cast_and_crew"><![CDATA[Cast & Crew]]></string>
+    <string name="guest_stars">Guest stars</string>
+    <string name="edge_size">Edge size</string>
+    <string name="refresh_rate_switching">Refresh rate switching</string>
+    <string name="automatic">Automatic</string>
+    <string name="username_or_password">Use username/password</string>
+    <string name="login">Login</string>
+    <string name="general">General</string>
+    <string name="container">Container</string>
+    <string name="title">Title</string>
+    <string name="codec">Codec</string>
+    <string name="profile">Profile</string>
+    <string name="level">Level</string>
+    <string name="resolution">Resolution</string>
+    <string name="anamorphic">Anamorphic</string>
+    <string name="interlaced">Interlaced</string>
+    <string name="framerate">Framerate</string>
+    <string name="bit_depth">Bit depth</string>
+    <string name="video_range">Video range</string>
+    <string name="video_range_type">Video range type</string>
+    <string name="color_space">Color space</string>
+    <string name="color_transfer">Color transfer</string>
+    <string name="color_primaries">Color primaries</string>
+    <string name="pixel_format">Pixel format</string>
+    <string name="ref_frames">Ref frames</string>
+    <string name="nal">NAL</string>
+    <string name="language">Language</string>
+    <string name="layout">Layout</string>
+    <string name="channels">Channels</string>
+    <string name="sample_rate">Sample rate</string>
+    <string name="avc">AVC</string>
+    <string name="yes">Yes</string>
+    <string name="no">No</string>
+    <string name="sdr">SDR</string>
+    <string name="hdr">HDR</string>
+    <string name="hdr10">HDR10</string>
+    <string name="hdr10_plus">HDR10+</string>
+    <string name="hlg">HLG</string>
+    <string name="bit_unit">bit</string>
+    <string name="sample_rate_unit">Hz</string>
+    <string name="show_titles">Show titles</string>
+    <string name="live_tv_repeat">Repeat</string>
+    <string name="favorite_channels_at_beginning">Show favorite channels first</string>
+    <string name="sort_channels_recently_watched">Sort channels by recently watched</string>
+    <string name="color_code_programs">Color-code programs</string>
+    <string name="subtitle_delay">Subtitle delay</string>
+    <string name="backdrop_display">Backdrop style</string>
+    <string name="resolution_switching">Resolution switching</string>
+    <string name="local">Local</string>
+    <string name="play_trailer">Play trailer</string>
+    <string name="no_trailers">No trailers</string>
+    <string name="clear_track_choices">Clear track choices</string>
+    <string name="dts_x">DTS:X</string>
+    <string name="dts_hd">DTS:HD</string>
+    <string name="truehd">TrueHD</string>
+    <string name="dolby_digital">DD</string>
+    <string name="dolby_digital_plus">DD+</string>
+    <string name="dts">DTS</string>
+    <string name="force_dovi_profile_7">Direct play Dolby Vision Profile 7</string>
+    <string name="force_dovi_profile_7_summary">Ignores device compatibility checks</string>
+
+    <string name="discover">Discover</string>
+    <string name="request">Request</string>
+    <string name="pending">Pending</string>
+    <string name="seerr_integration">Seerr integration</string>
+    <string name="remove_seerr_server">Remove Seerr Server</string>
+    <string name="seerr_server_added">Seerr server added</string>
+    <string name="password">Password</string>
+    <string name="username">Username</string>
+    <string name="url">URL</string>
+    <string name="trending">Trending</string>
+    <string name="upcoming_movies">Upcoming Movies</string>
+    <string name="upcoming_tv">Upcoming TV Shows</string>
+    <string name="request_4k">Request in 4K</string>
+    <string name="software_decoding_av1">AV1 software decoding</string>
+
+    <string-array name="theme_song_volume">
+        <item>Disabled</item>
+        <item>Lowest</item>
+        <item>Low</item>
+        <item>Medium</item>
+        <item>High</item>
+        <item>Full</item>
+    </string-array>
+
+    <string-array name="app_theme_colors">
+        <item>Purple</item>
+        <item>Blue</item>
+        <item>Green</item>
+        <item>Orange</item>
+        <item>Bold Blue</item>
+        <item>Black</item>
+    </string-array>
+
+    <string-array name="skip_behaviors">
+        <item>Ignore</item>
+        <item>Skip automatically</item>
+        <item>Ask to skip</item>
+    </string-array>
+
+    <string-array name="content_scale">
+        <item>Fit</item>
+        <item>None</item>
+        <item>Crop</item>
+        <item>Fill</item>
+        <item>Fill Width</item>
+        <item>Fill Height</item>
+    </string-array>
+
+    <string-array name="ffmpeg_extension_options">
+        <item>Only use FFmpeg if no built-in decoder exists</item>
+        <item>Prefer to use FFmpeg over built-in decoders</item>
+        <item>Never use FFmpeg decoders</item>
+    </string-array>
+
+    <string-array name="show_next_up_when_options">
+        <item>At the end of playback</item>
+        <item>During end credits/outro</item>
+    </string-array>
+
+    <string-array name="font_colors">
+        <item>White</item>
+        <item>Black</item>
+        <item>Light Gray</item>
+        <item>Dark Gray</item>
+        <item>Red</item>
+        <item>Yellow</item>
+        <item>Green</item>
+        <item>Cyan</item>
+        <item>Blue</item>
+        <item>Magenta</item>
+    </string-array>
+
+    <string-array name="subtitle_edge">
+        <item>None</item>
+        <item>Outline</item>
+        <item>Shadow</item>
+    </string-array>
+
+    <string-array name="background_style">
+        <item>None</item>
+        <item>Wrap</item>
+        <item>Boxed</item>
+    </string-array>
+
+    <string-array name="player_backend_options">
+        <item>ExoPlayer (default)</item>
+        <item>MPV (Experimental)</item>
+    </string-array>
+
+    <string-array name="aspect_ratios">
+        <item>Poster (2:3)</item>
+        <item>16:9</item>
+        <item>4:3</item>
+        <item>Square (1:1)</item>
+    </string-array>
+
+    <string-array name="image_types">
+        <item>Primary</item>
+        <item>Thumb</item>
+        <!--        <item>Banner</item>-->
+    </string-array>
+
+    <string-array name="backdrop_style_options">
+        <item>Image with dynamic color</item>
+        <item>Image only</item>
+        <item>None</item>
+    </string-array>
+
+    <!-- SyncPlay Strings -->
+    <string name="syncplay_title">SyncPlay</string>
+    <string name="syncplay_description">Watch together with friends in real-time</string>
+    <string name="syncplay_create_group">Create New Group</string>
+    <string name="syncplay_join_group">Join Group</string>
+    <string name="syncplay_leave_group">Leave Group</string>
+    <string name="syncplay_in_group">In SyncPlay Group</string>
+    <string name="syncplay_active">Synced</string>
+    <string name="syncplay_members">members</string>
+    <string name="syncplay_ready">Ready</string>
+    <string name="syncplay_buffering">Buffering</string>
+    <string name="syncplay_no_groups">No groups available</string>
+    <string name="syncplay_or">or</string>
+    <string name="syncplay_auto_join">Auto-join last group</string>
+    <string name="syncplay_show_indicator">Show sync indicator during playback</string>
+    <string name="syncplay_sync_threshold">Sync threshold</string>
+    <string name="close">Close</string>
+
+</resources>

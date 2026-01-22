@@ -1,0 +1,65 @@
+name: "Playback Problem"
+description: Report an issue with playback
+title: "[BUG] - <title>"
+labels: [
+  "bug", "playback"
+]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: "Description"
+      description: Please enter a description of the playback issue
+    validations:
+      required: true
+  - type: textarea
+    id: mediainfo
+    attributes:
+      label: "Media info"
+      description: Please enter details about what media you are trying to play (video or audio codecs, container, etc)
+    validations:
+      required: true
+  - type: dropdown
+    id: player
+    attributes:
+      label: Player backend
+      description: Which player(s) cause the issue?
+      multiple: true
+      options:
+        - ExoPlayer (default)
+        - MPV
+    validations:
+      required: true
+  - type: input
+    id: app-version
+    attributes:
+      label: "App Version"
+      description: What version of the app?
+      placeholder: "v0.3.0"
+    validations:
+      required: true
+  - type: input
+    id: server
+    attributes:
+      label: "Server Version"
+      description: What version of the server?
+      placeholder: "10.11.3"
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: "Device"
+      description: What device are you using?
+      placeholder: "NVIDIA Shield TV Pro 2019"
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Logs"
+      description: Please [gather any logs or crash reports](https://github.com/damontecres/Wholphin/wiki/Gathering-app-logs) and include them here.
+      placeholder: Review logs for personal information before sharing them here publicly!
+      render: bash
+    validations:
+      required: false
