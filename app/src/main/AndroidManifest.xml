@@ -63,6 +63,17 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/provider_paths" />
         </provider>
+        <receiver
+            android:name=".services.PlaybackCommandReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.wholphin.PLAY_BY_ID" />
+                <action android:name="com.wholphin.PAUSE" />
+                <action android:name="com.wholphin.PLAY" />
+                <action android:name="com.wholphin.SEEK" />
+                <action android:name="com.wholphin.STOP" />
+            </intent-filter>
+        </receiver>
         <provider
             android:name="androidx.startup.InitializationProvider"
             android:authorities="${applicationId}.androidx-startup"

@@ -121,6 +121,9 @@ class MainActivity : AppCompatActivity() {
     @Inject
     lateinit var datePlayedInvalidationService: DatePlayedInvalidationService
 
+    @Inject
+    lateinit var syncPlayManager: com.github.damontecres.wholphin.services.SyncPlayManager
+
     private var signInAuto = true
 
     @OptIn(ExperimentalTvMaterial3Api::class)
@@ -359,25 +362,33 @@ class MainActivity : AppCompatActivity() {
                 it.getStringExtra(INTENT_ITEM_ID)?.toUUIDOrNull()
             val type =
                 it.getStringExtra(INTENT_ITEM_TYPE)?.let(BaseItemKind::fromNameOrNull)
-            if (itemId != null && type != null) {
-                val seriesId = it.getStringExtra(INTENT_SERIES_ID)?.toUUIDOrNull()
-                val seasonId = it.getStringExtra(INTENT_SEASON_ID)?.toUUIDOrNull()
-                val episodeNumber = it.getIntExtra(INTENT_EPISODE_NUMBER, -1)
-                val seasonNumber = it.getIntExtra(INTENT_SEASON_NUMBER, -1)
-                if (seriesId != null && seasonId != null && episodeNumber >= 0 && seasonNumber >= 0) {
-                    Destination.SeriesOverview(
-                        itemId = seriesId,
-                        type = BaseItemKind.SERIES,
-                        seasonEpisode =
-                            SeasonEpisodeIds(
-                                seasonId = seasonId,
-                                seasonNumber = seasonNumber,
-                                episodeId = itemId,
-                                episodeNumber = episodeNumber,
-                            ),
-                    )
+            val startPlayback = it.getBooleanExtra(INTENT_START_PLAYBACK, false)
+            val positionMs = it.getLongExtra(INTENT_POSITION_MS, 0L)
+            if (itemId != null) {
+                if (startPlayback) {
+                    Destination.Playback(itemId, positionMs)
+                } else if (type != null) {
+                    val seriesId = it.getStringExtra(INTENT_SERIES_ID)?.toUUIDOrNull()
+                    val seasonId = it.getStringExtra(INTENT_SEASON_ID)?.toUUIDOrNull()
+                    val episodeNumber = it.getIntExtra(INTENT_EPISODE_NUMBER, -1)
+                    val seasonNumber = it.getIntExtra(INTENT_SEASON_NUMBER, -1)
+                    if (seriesId != null && seasonId != null && episodeNumber >= 0 && seasonNumber >= 0) {
+                        Destination.SeriesOverview(
+                            itemId = seriesId,
+                            type = BaseItemKind.SERIES,
+                            seasonEpisode =
+                                SeasonEpisodeIds(
+                                    seasonId = seasonId,
+                                    seasonNumber = seasonNumber,
+                                    episodeId = itemId,
+                                    episodeNumber = episodeNumber,
+                                ),
+                        )
+                    } else {
+                        Destination.MediaItem(itemId, type)
+                    }
                 } else {
-                    Destination.MediaItem(itemId, type)
+                    null
                 }
             } else {
                 null
@@ -391,6 +402,8 @@ class MainActivity : AppCompatActivity() {
         const val INTENT_EPISODE_NUMBER = "epNum"
         const val INTENT_SEASON_NUMBER = "seaNum"
         const val INTENT_SEASON_ID = "seaId"
+        const val INTENT_START_PLAYBACK = "startPlayback"
+        const val INTENT_POSITION_MS = "positionMs"
     }
 }
 
