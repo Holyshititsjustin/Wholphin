@@ -113,6 +113,18 @@ class AppPreferencesSerializer
                                             colorCodePrograms =
                                                 AppPreference.LiveTvColorCodePrograms.defaultValue
                                         }.build()
+
+                                // Initialize SyncPlay preferences defaults
+                                syncplayPreferences =
+                                    SyncPlayPreferences
+                                        .newBuilder()
+                                        .apply {
+                                            enableSyncplay = AppPreference.EnableSyncPlay.defaultValue
+                                            autoJoinLastGroup = AppPreference.AutoJoinLastGroup.defaultValue
+                                            lastGroupId = ""
+                                            showSyncIndicator = AppPreference.ShowSyncIndicator.defaultValue
+                                            syncThresholdMs = AppPreference.SyncPlayThreshold.defaultValue.toInt()
+                                        }.build()
                             }.build()
 
                     advancedPreferences =

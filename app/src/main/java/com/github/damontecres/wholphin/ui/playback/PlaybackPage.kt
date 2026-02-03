@@ -42,6 +42,7 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.intl.Locale
 import androidx.compose.ui.unit.dp
@@ -51,6 +52,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.Player
 import androidx.media3.ui.SubtitleView
 import androidx.media3.ui.compose.PlayerSurface
 import androidx.media3.ui.compose.SURFACE_TYPE_SURFACE_VIEW
@@ -59,11 +61,14 @@ import androidx.media3.ui.compose.state.rememberPlayPauseButtonState
 import androidx.media3.ui.compose.state.rememberPresentationState
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.surfaceColorAtElevation
+import timber.log.Timber
+import android.util.Log
 import com.github.damontecres.wholphin.data.model.ItemPlayback
 import com.github.damontecres.wholphin.data.model.Playlist
 import com.github.damontecres.wholphin.preferences.PlayerBackend
 import com.github.damontecres.wholphin.preferences.UserPreferences
 import com.github.damontecres.wholphin.preferences.skipBackOnResume
+import com.github.damontecres.wholphin.services.SyncPlayManager
 import com.github.damontecres.wholphin.ui.AspectRatios
 import com.github.damontecres.wholphin.ui.LocalImageUrlService
 import com.github.damontecres.wholphin.ui.OneTimeLaunchedEffect
@@ -82,6 +87,7 @@ import com.github.damontecres.wholphin.util.LoadingState
 import com.github.damontecres.wholphin.util.Media3SubtitleOverride
 import com.github.damontecres.wholphin.util.mpv.MpvPlayer
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.jellyfin.sdk.model.extensions.ticks
@@ -101,6 +107,8 @@ fun PlaybackPage(
     modifier: Modifier = Modifier,
     viewModel: PlaybackViewModel = hiltViewModel(),
 ) {
+
+
     LifecycleStartEffect(destination) {
         onStopOrDispose {
             viewModel.release()
@@ -131,6 +139,28 @@ fun PlaybackPage(
             val player = viewModel.player
             val mediaInfo by viewModel.currentMediaInfo.observeAsState()
             val userDto by viewModel.currentUserDto.observeAsState()
+
+            var isPlaying by remember { mutableStateOf(player.isPlaying) }
+            var playWhenReady by remember { mutableStateOf(player.playWhenReady) }
+            var playbackState by remember { mutableStateOf(player.playbackState) }
+            androidx.compose.runtime.DisposableEffect(player) {
+                val listener =
+                    object : Player.Listener {
+                        override fun onIsPlayingChanged(isPlayingNow: Boolean) {
+                            isPlaying = isPlayingNow
+                        }
+
+                        override fun onPlayWhenReadyChanged(playWhenReadyNow: Boolean, reason: Int) {
+                            playWhenReady = playWhenReadyNow
+                        }
+
+                        override fun onPlaybackStateChanged(playbackStateNow: Int) {
+                            playbackState = playbackStateNow
+                        }
+                    }
+                player.addListener(listener)
+                onDispose { player.removeListener(listener) }
+            }
 
             val currentPlayback by viewModel.currentPlayback.collectAsState()
             val currentItemPlayback by viewModel.currentItemPlayback.observeAsState(
@@ -178,6 +208,140 @@ fun PlaybackPage(
             val subtitleDelay = currentPlayback?.subtitleDelay ?: Duration.ZERO
             LaunchedEffect(subtitleDelay) {
                 (player as? MpvPlayer)?.subtitleDelay = subtitleDelay
+            }
+
+            // SyncPlay position reporting - only when both SyncPlay is active AND player is playing
+            val context = androidx.compose.ui.platform.LocalContext.current
+            val syncPlayManager = (context as? com.github.damontecres.wholphin.MainActivity)?.syncPlayManager
+            val isSyncPlayActive by syncPlayManager?.isSyncPlayActive?.collectAsState() ?: remember { mutableStateOf(false) }
+            val isGroupPlaying by syncPlayManager?.isGroupPlaying?.collectAsState() ?: remember { mutableStateOf(false) }
+            
+            // DEBUG: Log SyncPlay state changes
+            LaunchedEffect(syncPlayManager) {
+                Timber.i("🎬 DEBUG: syncPlayManager instance = ${syncPlayManager != null}")
+                Log.i("PlaybackPage", "syncPlayManager instance = ${syncPlayManager != null}")
+            }
+            LaunchedEffect(isSyncPlayActive) {
+                Timber.i("🎬 DEBUG: isSyncPlayActive changed to $isSyncPlayActive")
+            }
+            LaunchedEffect(player.isPlaying) {
+                Timber.i("🎬 DEBUG: player.isPlaying changed to ${player.isPlaying}")
+            }
+            val isPlaybackActive = playWhenReady && playbackState != Player.STATE_IDLE
+            LaunchedEffect(isPlaying) {
+                Timber.i("🎬 DEBUG: isPlaying state changed to $isPlaying")
+            }
+            LaunchedEffect(playWhenReady, playbackState) {
+                Timber.i("🎬 DEBUG: playWhenReady=$playWhenReady, playbackState=$playbackState, isPlaybackActive=$isPlaybackActive")
+            }
+            LaunchedEffect(currentPlayback) {
+                Timber.i("🎬 DEBUG: currentPlayback changed, itemId = ${currentPlayback?.item?.id}")
+            }
+
+            // Ensure SyncPlay knows what item is playing locally so Ready reports can include playlistItemId
+            LaunchedEffect(isSyncPlayActive, currentPlayback?.item?.id) {
+                if (isSyncPlayActive) {
+                    currentPlayback?.item?.id?.let { syncPlayManager?.setLocalPlaybackItemId(it) }
+                }
+            }
+            
+            val currentGroupId by syncPlayManager?.currentGroupId?.collectAsState() ?: remember { mutableStateOf(null) }
+            
+            // Position reporting for SyncPlay: When in a SyncPlay group, report playback position
+            // The browser/initiating client controls the group; this TV just reports its state
+            LaunchedEffect(isSyncPlayActive, isPlaybackActive, currentGroupId) {
+                Timber.i("🎬 SyncPlay position reporting check: isSyncPlayActive=$isSyncPlayActive, isPlaybackActive=$isPlaybackActive, currentGroupId=$currentGroupId, syncPlayManager=${syncPlayManager != null}")
+                val shouldReport = isSyncPlayActive && isPlaybackActive && currentGroupId != null && syncPlayManager != null
+                Timber.i("🎬 Position reporting should=${shouldReport}")
+                if (shouldReport) {
+                    Timber.i("🎬 Starting position reporting for SyncPlay")
+                    // Start reporting position when SyncPlay is active and playback is happening
+                    // This will tell the server that playback has started, transitioning group from Waiting to Playing
+                    syncPlayManager.startPositionReporting {
+                        // Ensure player access on main thread to avoid ExoPlayer threading errors
+                        withContext(Dispatchers.Main.immediate) {
+                            player.currentPosition // Returns position in milliseconds
+                        }
+                    }
+                } else {
+                    Timber.i("🎬 Stopping position reporting: not meeting conditions")
+                    // Stop reporting when not in SyncPlay or not playing
+                    syncPlayManager?.stopPositionReporting()
+                }
+            }
+
+            // Stop SyncPlay operations when playback ends
+            LifecycleStartEffect(Unit) {
+                onStopOrDispose {
+                    syncPlayManager?.stopPositionReporting()
+                    syncPlayManager?.stopDriftChecking()
+                }
+            }
+
+            // Send pause/unpause commands to SyncPlay when user pauses/plays locally
+            // TODO: Implement sending pause/unpause to server when user pauses/plays locally
+            // This requires implementing pause()/unpause() methods in SyncPlayManager
+            /*
+            LaunchedEffect(isSyncPlayActive, isPlaying, currentGroupId) {
+                if (isSyncPlayActive && currentGroupId != null && syncPlayManager != null) {
+                    Timber.i("🎬 Local playback state check: isPlaying=$isPlaying, isSyncPlayActive=$isSyncPlayActive")
+                    // When user pauses locally, notify server
+                    if (!isPlaying && playWhenReady) {
+                        // isPlaying became false but playWhenReady is still true = user paused
+                        Timber.i("🎬 User paused locally - sending Pause to SyncPlay group")
+                        syncPlayManager.pause()
+                    } else if (isPlaying && !playWhenReady) {
+                        // isPlaying became true but playWhenReady is false = shouldn't happen normally
+                        Timber.d("🎬 Unexpected state: isPlaying=true but playWhenReady=false")
+                    }
+                }
+            }
+            */
+
+            // Handle SyncPlay playback commands from server
+            val syncPlayCommand by syncPlayManager?.playbackCommands?.collectAsState() ?: remember { mutableStateOf(null) }
+            LaunchedEffect(syncPlayCommand) {
+                syncPlayCommand?.let { command ->
+                    Timber.i("🎬 PlaybackPage received SyncPlay command: $command")
+                    when (command) {
+                        is com.github.damontecres.wholphin.services.SyncPlayCommand.Pause -> {
+                            Timber.i("🎬🔴 PlaybackPage executing Pause command: position=${command.positionMs}ms")
+                            player.pause()
+                            if (player.currentPosition != command.positionMs) {
+                                player.seekTo(command.positionMs)
+                            }
+                        }
+                        is com.github.damontecres.wholphin.services.SyncPlayCommand.Unpause -> {
+                            Timber.i("🎬🟢 PlaybackPage executing Unpause command: position=${command.positionMs}ms")
+                            if (player.currentPosition != command.positionMs) {
+                                player.seekTo(command.positionMs)
+                            }
+                            player.play()
+                        }
+                        is com.github.damontecres.wholphin.services.SyncPlayCommand.Seek -> {
+                            Timber.i("🎬 PlaybackPage executing Seek command: position=${command.positionMs}ms")
+                            player.seekTo(command.positionMs)
+                        }
+                        is com.github.damontecres.wholphin.services.SyncPlayCommand.SetPlaybackRate -> {
+                            Timber.i("🎬 PlaybackPage executing SetPlaybackRate command: rate=${command.rate}")
+                            player.setPlaybackSpeed(command.rate)
+                        }
+                        is com.github.damontecres.wholphin.services.SyncPlayCommand.Play -> {
+                            // Start new playback - navigate to the first item
+                            val firstItemId = command.itemIds.getOrNull(command.startIndex) ?: command.itemIds.firstOrNull()
+                            timber.log.Timber.i("🎬 Page-level SyncPlay Play received: items=%d startIndex=%d position=%d", command.itemIds.size, command.startIndex, command.startPositionMs)
+                            if (firstItemId != null) {
+                                timber.log.Timber.i("🎬 Page-level navigate to %s at %dms", firstItemId, command.startPositionMs)
+                                viewModel.navigationManager.navigateTo(
+                                    com.github.damontecres.wholphin.ui.nav.Destination.Playback(
+                                        itemId = firstItemId,
+                                        positionMs = command.startPositionMs
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             val presentationState = rememberPresentationState(player, false)
@@ -376,6 +540,7 @@ fun PlaybackPage(
                             },
                             currentSegment = currentSegment,
                             showClock = preferences.appPreferences.interfacePreferences.showClock,
+                            syncPlayManager = syncPlayManager,
                         )
                     }
 

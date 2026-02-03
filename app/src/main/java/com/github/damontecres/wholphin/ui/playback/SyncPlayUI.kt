@@ -10,340 +10,290 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Button
-import androidx.tv.material3.ButtonDefaults
-import androidx.tv.material3.ExperimentalTvMaterial3Api
-import androidx.tv.material3.Icon
-import androidx.tv.material3.ListItem
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.github.damontecres.wholphin.R
 import com.github.damontecres.wholphin.services.SyncPlayManager
-import com.github.damontecres.wholphin.services.SyncPlayParticipant
-import com.github.damontecres.wholphin.services.SyncPlayState
-import com.github.damontecres.wholphin.ui.theme.WholphinTheme
-import kotlinx.coroutines.CoroutineScope
+import com.github.damontecres.wholphin.services.SyncPlayMessage
+import com.github.damontecres.wholphin.ui.showToast
 import kotlinx.coroutines.launch
+import org.jellyfin.sdk.model.api.GroupInfoDto
 
-/**
- * SyncPlay status indicator overlay shown during playback
- */
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-fun SyncPlayStatusIndicator(
-    syncPlayManager: SyncPlayManager,
-    modifier: Modifier = Modifier,
-) {
-    val syncState by syncPlayManager.syncPlayState.collectAsState()
-
-    when (val state = syncState) {
-        is SyncPlayState.InGroup -> {
-            Box(
-                modifier =
-                    modifier
-                        .padding(16.dp)
-                        .background(
-                            MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
-                            shape = MaterialTheme.shapes.medium,
-                        ).padding(horizontal = 16.dp, vertical = 8.dp),
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    // Sync icon
-                    Box(
-                        modifier =
-                            Modifier
-                                .size(12.dp)
-                                .clip(CircleShape)
-                                .background(if (state.isPlaying) Color.Green else Color.Gray),
-                    )
-
-                    Text(
-                        text = stringResource(R.string.syncplay_active),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-
-                    Text(
-                        text = "${state.members.size} ${stringResource(R.string.syncplay_members)}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                    )
-                }
-            }
-        }
-        is SyncPlayState.Error -> {
-            Box(
-                modifier =
-                    modifier
-                        .padding(16.dp)
-                        .background(
-                            MaterialTheme.colorScheme.error.copy(alpha = 0.9f),
-                            shape = MaterialTheme.shapes.medium,
-                        ).padding(horizontal = 16.dp, vertical = 8.dp),
-            ) {
-                Text(
-                    text = state.message,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onError,
-                )
-            }
-        }
-        else -> {}
-    }
-}
-
-/**
- * Dialog for joining or creating a SyncPlay group
- */
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun SyncPlayDialog(
     syncPlayManager: SyncPlayManager,
-    coroutineScope: CoroutineScope,
     onDismiss: () -> Unit,
-    modifier: Modifier = Modifier,
 ) {
-    val syncState by syncPlayManager.syncPlayState.collectAsState()
-    var selectedGroupIndex by remember { mutableStateOf(0) }
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val isSyncPlayActive by syncPlayManager.isSyncPlayActive.collectAsState()
+    val currentGroupId by syncPlayManager.currentGroupId.collectAsState()
+    val groupMembers by syncPlayManager.groupMembers.collectAsState()
+    val availableGroups by syncPlayManager.availableGroups.collectAsState()
 
-    Surface(
-        modifier = modifier.fillMaxSize(),
-        colors =
-            androidx.tv.material3.SurfaceDefaults.colors(
-                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-            ),
+    // Refresh groups when dialog opens to discover existing groups
+    LaunchedEffect(Unit) {
+        syncPlayManager.refreshGroups()
+    }
+
+    // Handle toast notifications for user joins and command sends
+    val syncPlayMessage by syncPlayManager.syncPlayMessages.collectAsState()
+    LaunchedEffect(syncPlayMessage) {
+        when (syncPlayMessage) {
+            is SyncPlayMessage.UserJoined -> {
+                val userName = (syncPlayMessage as SyncPlayMessage.UserJoined).userName
+                coroutineScope.launch {
+                    showToast(context, "👋 $userName joined SyncPlay")
+                }
+            }
+            is SyncPlayMessage.CommandSent -> {
+                val command = (syncPlayMessage as SyncPlayMessage.CommandSent).command
+                coroutineScope.launch {
+                    showToast(context, "📤 $command")
+                }
+            }
+            else -> {
+                // Ignore other message types
+            }
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.8f)),
+        contentAlignment = Alignment.Center
     ) {
-        Column(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
+        Surface(
+            modifier = Modifier
+                .width(600.dp)
+                .padding(32.dp),
+            shape = MaterialTheme.shapes.medium
         ) {
-            Text(
-                text = stringResource(R.string.syncplay_title),
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-            )
+            Column(
+                modifier = Modifier.padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.syncplay_title),
+                    style = MaterialTheme.typography.headlineMedium
+                )
 
-            Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
-            when (val state = syncState) {
-                is SyncPlayState.Idle -> {
-                    // Show options to create or join a group
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
-                    ) {
-                        Text(
-                            text = stringResource(R.string.syncplay_description),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                        )
+                if (isSyncPlayActive) {
+                    // Already in a group
+                    Text(
+                        text = stringResource(R.string.syncplay_in_group),
+                        style = MaterialTheme.typography.bodyLarge
+                    )
 
-                        Button(
-                            onClick = {
-                                coroutineScope.launch {
-                                    syncPlayManager.createGroup()
-                                }
-                            },
-                            modifier = Modifier.width(300.dp),
+                    Text(
+                        text = "${groupMembers.size} ${stringResource(R.string.syncplay_members)}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    // Display participant list
+                    if (groupMembers.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth(0.9f)
+                                .background(
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    shape = MaterialTheme.shapes.small
+                                )
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            Text(stringResource(R.string.syncplay_create_group))
-                        }
-
-                        Text(
-                            text = stringResource(R.string.syncplay_or),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-
-                        // TODO: Show list of available groups to join
-                        Text(
-                            text = stringResource(R.string.syncplay_no_groups),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                        )
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        Button(
-                            onClick = onDismiss,
-                            modifier = Modifier.width(300.dp),
-                            colors =
-                                ButtonDefaults.colors(
-                                    containerColor = MaterialTheme.colorScheme.secondary,
-                                ),
-                        ) {
-                            Text(stringResource(R.string.cancel))
+                            groupMembers.forEach { member ->
+                                Text(
+                                    text = "• $member",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
-                }
 
-                is SyncPlayState.InGroup -> {
-                    // Show current group members and controls
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally)
                     ) {
+                        Button(onClick = {
+                            syncPlayManager.pause()
+                        }) {
+                            Text("Pause")
+                        }
+
+                        Button(onClick = {
+                            syncPlayManager.unpause()
+                        }) {
+                            Text("Resume")
+                        }
+
+                        Button(onClick = {
+                            syncPlayManager.leaveGroup()
+                            onDismiss()
+                        }) {
+                            Text(stringResource(R.string.syncplay_leave_group))
+                        }
+                    }
+                } else {
+                    // Not in a group - show create/join options
+                    Text(
+                        text = stringResource(R.string.syncplay_description),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Button(
+                        onClick = {
+                            syncPlayManager.createGroup()
+                        },
+                        modifier = Modifier.fillMaxWidth(0.8f)
+                    ) {
+                        Text(stringResource(R.string.syncplay_create_group))
+                    }
+
+                    Text(
+                        text = stringResource(R.string.syncplay_or),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    if (availableGroups.isNotEmpty()) {
                         Text(
-                            text = stringResource(R.string.syncplay_in_group),
-                            style = MaterialTheme.typography.titleLarge,
+                            text = "Available Groups:",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
 
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        Text(
-                            text = "${stringResource(R.string.syncplay_members)}: ${state.members.size}",
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-
-                        // Member list
-                        Column(
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth(0.6f)
-                                    .padding(vertical = 8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth(0.9f)
+                                .height(200.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    shape = MaterialTheme.shapes.small
+                                )
+                                .padding(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            state.members.forEach { member ->
-                                SyncPlayMemberItem(member)
+                            items(availableGroups) { group ->
+                                Button(
+                                    onClick = {
+                                        // Convert Jellyfin UUID to Java UUID for joining
+                                        val javaUuid = java.util.UUID.fromString(group.groupId.toString())
+                                        syncPlayManager.joinGroup(javaUuid)
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalAlignment = Alignment.Start
+                                    ) {
+                                        Text(
+                                            text = "Group ${group.groupId}",
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                        Text(
+                                            text = "${group.participants?.size ?: 0} members",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
                             }
                         }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        Button(
-                            onClick = {
-                                coroutineScope.launch {
-                                    syncPlayManager.leaveGroup()
-                                    onDismiss()
-                                }
-                            },
-                            modifier = Modifier.width(300.dp),
-                            colors =
-                                ButtonDefaults.colors(
-                                    containerColor = MaterialTheme.colorScheme.error,
-                                ),
-                        ) {
-                            Text(stringResource(R.string.syncplay_leave_group))
-                        }
-
-                        Button(
-                            onClick = onDismiss,
-                            modifier = Modifier.width(300.dp),
-                            colors =
-                                ButtonDefaults.colors(
-                                    containerColor = MaterialTheme.colorScheme.secondary,
-                                ),
-                        ) {
-                            Text(stringResource(R.string.close))
-                        }
+                    } else {
+                        Text(
+                            text = "No groups available",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
 
-                is SyncPlayState.Error -> {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
-                    ) {
-                        Text(
-                            text = stringResource(R.string.error),
-                            style = MaterialTheme.typography.titleLarge,
-                            color = MaterialTheme.colorScheme.error,
-                        )
+                Spacer(modifier = Modifier.height(8.dp))
 
-                        Text(
-                            text = state.message,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-
-                        Button(
-                            onClick = onDismiss,
-                            modifier = Modifier.width(300.dp),
-                        ) {
-                            Text(stringResource(R.string.close))
-                        }
-                    }
+                Button(onClick = onDismiss) {
+                    Text(stringResource(R.string.close))
                 }
             }
         }
     }
 }
 
-/**
- * Display a single SyncPlay group member
- */
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun SyncPlayMemberItem(
-    member: SyncPlayParticipant,
+fun SyncPlayStatusIndicator(
+    syncPlayManager: SyncPlayManager,
+    modifier: Modifier = Modifier
+) {
+    val isSyncPlayActive by syncPlayManager.isSyncPlayActive.collectAsState()
+
+    if (isSyncPlayActive) {
+        Box(
+            modifier = modifier
+                .background(
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f),
+                    shape = MaterialTheme.shapes.small
+                )
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+        ) {
+            Text(
+                text = "🔄 ${stringResource(R.string.syncplay_active)}",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+        }
+    }
+}
+@Composable
+fun SyncPlayManagementPage(
+    preferences: com.github.damontecres.wholphin.preferences.UserPreferences? = null,
     modifier: Modifier = Modifier,
 ) {
-    ListItem(
-        selected = false,
-        onClick = { },
-        headlineContent = {
-            Text(
-                text = member.username,
-                style = MaterialTheme.typography.bodyLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        },
-        trailingContent = {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (member.isBuffering) {
-                    Box(
-                        modifier =
-                            Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(Color.Yellow),
-                    )
-                    Text(
-                        text = stringResource(R.string.syncplay_buffering),
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                } else if (member.isReady) {
-                    Box(
-                        modifier =
-                            Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(Color.Green),
-                    )
-                    Text(
-                        text = stringResource(R.string.syncplay_ready),
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                }
-            }
-        },
-        modifier = modifier,
-    )
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val syncPlayManager = (context as? com.github.damontecres.wholphin.MainActivity)?.syncPlayManager
+        ?: return
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        SyncPlayDialog(
+            syncPlayManager = syncPlayManager,
+            onDismiss = {} // Empty as we're on a full page
+        )
+    }
 }

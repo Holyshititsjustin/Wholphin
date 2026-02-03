@@ -54,6 +54,7 @@ import com.github.damontecres.wholphin.data.model.BaseItem
 import com.github.damontecres.wholphin.data.model.Chapter
 import com.github.damontecres.wholphin.data.model.Playlist
 import com.github.damontecres.wholphin.data.model.aspectRatioFloat
+import com.github.damontecres.wholphin.services.SyncPlayManager
 import com.github.damontecres.wholphin.ui.AppColors
 import com.github.damontecres.wholphin.ui.AspectRatios
 import com.github.damontecres.wholphin.ui.LocalImageUrlService
@@ -106,6 +107,7 @@ fun PlaybackOverlay(
     playlist: Playlist = Playlist(listOf(), 0),
     onClickPlaylist: (BaseItem) -> Unit = {},
     seekBarInteractionSource: MutableInteractionSource = remember { MutableInteractionSource() },
+    syncPlayManager: SyncPlayManager? = null,
 ) {
     val seekBarFocused by seekBarInteractionSource.collectIsFocusedAsState()
     // Will be used for preview/trick play images
@@ -210,6 +212,7 @@ fun PlaybackOverlay(
                     currentSegment = currentSegment,
                     modifier =
                     Modifier,
+                    syncPlayManager = syncPlayManager,
                     // Don't use key events because this control has vertical items so up/down is tough to manage
                 )
                 when (nextState) {
@@ -524,6 +527,7 @@ fun Controller(
     subtitle: String? = null,
     seekBarInteractionSource: MutableInteractionSource = remember { MutableInteractionSource() },
     onNextStateFocus: () -> Unit = {},
+    syncPlayManager: SyncPlayManager? = null,
 ) {
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -602,6 +606,7 @@ fun Controller(
             moreFocusRequester = moreFocusRequester,
             captionFocusRequester = captionFocusRequester,
             settingsFocusRequester = settingsFocusRequester,
+            syncPlayManager = syncPlayManager,
         )
     }
 }

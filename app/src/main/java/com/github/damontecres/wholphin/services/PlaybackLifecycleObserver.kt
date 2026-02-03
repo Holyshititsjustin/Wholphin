@@ -29,14 +29,14 @@ class PlaybackLifecycleObserver
 
         override fun onResume(owner: LifecycleOwner) {
             if (wasPlaying == true) {
-                playerFactory.currentPlayer?.let {
+                PlayerFactory.currentPlayer?.let {
                     if (!it.isReleased) it.play()
                 }
             }
         }
 
         override fun onPause(owner: LifecycleOwner) {
-            playerFactory.currentPlayer?.let {
+            PlayerFactory.currentPlayer?.let {
                 wasPlaying = it.isPlaying
                 it.pause()
             }

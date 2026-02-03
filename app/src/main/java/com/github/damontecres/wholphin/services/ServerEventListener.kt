@@ -11,11 +11,16 @@ import com.github.damontecres.wholphin.data.model.JellyfinServer
 import com.github.damontecres.wholphin.data.model.JellyfinUser
 import com.github.damontecres.wholphin.ui.launchIO
 import com.github.damontecres.wholphin.ui.showToast
+import com.github.damontecres.wholphin.services.hilt.AuthOkHttpClient
 import dagger.hilt.android.qualifiers.ActivityContext
 import dagger.hilt.android.scopes.ActivityScoped
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.jellyfin.sdk.api.client.ApiClient
 import org.jellyfin.sdk.api.client.extensions.sessionApi
 import org.jellyfin.sdk.api.sockets.subscribe
@@ -32,6 +37,7 @@ class ServerEventListener
         @param:ActivityContext private val context: Context,
         private val api: ApiClient,
         private val serverRepository: ServerRepository,
+        @AuthOkHttpClient private val okHttpClient: OkHttpClient,
     ) : DefaultLifecycleObserver {
         private val activity = (context as AppCompatActivity)
 
@@ -63,10 +69,55 @@ class ServerEventListener
                             ),
                         supportsMediaControl = true,
                     )
+                        postSyncPlayCapabilities(server, user)
                     setupListeners()
                 }
             }
         }
+
+            private fun postSyncPlayCapabilities(
+                server: JellyfinServer,
+                user: JellyfinUser,
+            ) {
+                val accessToken = user.accessToken
+                val baseUrl = server.url?.trimEnd('/')
+                if (accessToken.isNullOrBlank() || baseUrl.isNullOrBlank()) {
+                    Timber.w("SyncPlay capabilities not sent: missing access token or base URL")
+                    return
+                }
+
+                val url = "$baseUrl/Sessions/Capabilities?api_key=$accessToken"
+                val requestBodyJson =
+                    """
+                    {
+                        "PlayableMediaTypes": ["Video"],
+                        "SupportedCommands": ["DisplayMessage", "SendString"],
+                        "SupportsMediaControl": true,
+                        "SupportsSyncPlay": true
+                    }
+                    """.trimIndent()
+                val request =
+                    Request.Builder()
+                        .url(url)
+                        .post(requestBodyJson.toRequestBody("application/json".toMediaType()))
+                        .build()
+
+                runCatching {
+                    okHttpClient.newCall(request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            Timber.i("✅ Posted SyncPlay capabilities to server")
+                        } else {
+                            Timber.w(
+                                "❌ Failed to post SyncPlay capabilities: HTTP %d - %s",
+                                response.code,
+                                response.message,
+                            )
+                        }
+                    }
+                }.onFailure { ex ->
+                    Timber.e(ex, "❌ Error posting SyncPlay capabilities")
+                }
+            }
 
         fun setupListeners() {
             serverRepository.currentUser

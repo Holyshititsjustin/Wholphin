@@ -39,11 +39,12 @@ class PlayerFactory
         @param:ApplicationContext private val context: Context,
         private val appPreferences: DataStore<AppPreferences>,
     ) {
+    companion object {
         @Volatile
         var currentPlayer: Player? = null
-            private set
+    }
 
-        fun createVideoPlayer(): Player {
+    fun createVideoPlayer(): Player {
             if (currentPlayer?.isReleased == false) {
                 Timber.w("Player was not released before trying to create a new one!")
                 currentPlayer?.release()
@@ -92,6 +93,7 @@ class PlayerFactory
                     }
                 }
             currentPlayer = newPlayer
+            PlayerFactory.currentPlayer = newPlayer
             return newPlayer
         }
     }

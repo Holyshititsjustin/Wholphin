@@ -249,6 +249,14 @@ fun DestinationContent(
             )
         }
 
+        Destination.SyncPlay -> {
+            LaunchedEffect(Unit) { onClearBackdrop.invoke() }
+            com.github.damontecres.wholphin.ui.playback.SyncPlayManagementPage(
+                preferences = preferences,
+                modifier = modifier,
+            )
+        }
+
         Destination.Debug -> {
             DebugPage(preferences, modifier)
         }

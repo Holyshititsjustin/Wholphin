@@ -42,6 +42,9 @@ sealed class Destination(
     data object Search : Destination()
 
     @Serializable
+    data object SyncPlay : Destination()
+
+    @Serializable
     data class SeriesOverview(
         val itemId: UUID,
         val type: BaseItemKind,

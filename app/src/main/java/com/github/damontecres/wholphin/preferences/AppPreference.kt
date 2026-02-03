@@ -892,7 +892,11 @@ sealed interface AppPreference<Pref, T> {
                 getter = { it.interfacePreferences.syncplayPreferences.enableSyncplay },
                 setter = { prefs, value ->
                     prefs.updateInterfacePreferences {
-                        syncplayPreferences = syncplayPreferences.copy(enableSyncplay = value)
+                        syncplayPreferences =
+                            syncplayPreferences
+                                .toBuilder()
+                                .apply { enableSyncplay = value }
+                                .build()
                     }
                 },
                 summary = R.string.syncplay_description,
@@ -905,7 +909,11 @@ sealed interface AppPreference<Pref, T> {
                 getter = { it.interfacePreferences.syncplayPreferences.autoJoinLastGroup },
                 setter = { prefs, value ->
                     prefs.updateInterfacePreferences {
-                        syncplayPreferences = syncplayPreferences.copy(autoJoinLastGroup = value)
+                        syncplayPreferences =
+                            syncplayPreferences
+                                .toBuilder()
+                                .apply { autoJoinLastGroup = value }
+                                .build()
                     }
                 },
                 summaryOn = R.string.enabled,
@@ -919,7 +927,11 @@ sealed interface AppPreference<Pref, T> {
                 getter = { it.interfacePreferences.syncplayPreferences.showSyncIndicator },
                 setter = { prefs, value ->
                     prefs.updateInterfacePreferences {
-                        syncplayPreferences = syncplayPreferences.copy(showSyncIndicator = value)
+                        syncplayPreferences =
+                            syncplayPreferences
+                                .toBuilder()
+                                .apply { showSyncIndicator = value }
+                                .build()
                     }
                 },
                 summaryOn = R.string.enabled,
@@ -936,7 +948,11 @@ sealed interface AppPreference<Pref, T> {
                 getter = { it.interfacePreferences.syncplayPreferences.syncThresholdMs.toLong() },
                 setter = { prefs, value ->
                     prefs.updateInterfacePreferences {
-                        syncplayPreferences = syncplayPreferences.copy(syncThresholdMs = value.toInt())
+                        syncplayPreferences =
+                            syncplayPreferences
+                                .toBuilder()
+                                .apply { syncThresholdMs = value.toInt() }
+                                .build()
                     }
                 },
                 summarizer = { value ->

@@ -59,6 +59,7 @@ import androidx.tv.material3.Text
 import androidx.tv.material3.surfaceColorAtElevation
 import com.github.damontecres.wholphin.R
 import com.github.damontecres.wholphin.preferences.AppThemeColors
+import com.github.damontecres.wholphin.services.SyncPlayManager
 import com.github.damontecres.wholphin.ui.AppColors
 import com.github.damontecres.wholphin.ui.PreviewTvSpec
 import com.github.damontecres.wholphin.ui.components.Button
@@ -132,6 +133,7 @@ fun PlaybackControls(
     modifier: Modifier = Modifier,
     initialFocusRequester: FocusRequester = remember { FocusRequester() },
     seekBarInteractionSource: MutableInteractionSource = remember { MutableInteractionSource() },
+    syncPlayManager: SyncPlayManager? = null,
 ) {
     val scope = rememberCoroutineScope()
 
@@ -142,6 +144,29 @@ fun PlaybackControls(
         }
         controllerViewState.pulseControls()
     }
+    
+    val onSeek: (Long) -> Unit = { position ->
+        onSeekProgress(position)
+        // Send SyncPlay seek command if in SyncPlay
+        syncPlayManager?.seek(position)
+    }
+    
+    val onPlayPauseClick: () -> Unit = {
+        onControllerInteraction.invoke()
+        if (showPlay) {
+            playerControls.play()
+            skipBackOnResume?.let {
+                playerControls.seekBack(it)
+            }
+            // Send SyncPlay unpause command if in SyncPlay
+            syncPlayManager?.unpause()
+        } else {
+            playerControls.pause()
+            // Send SyncPlay pause command if in SyncPlay
+            syncPlayManager?.pause()
+        }
+    }
+    
     LaunchedEffect(controllerViewState.controlsVisible) {
         if (controllerViewState.controlsVisible) {
             initialFocusRequester.tryRequestFocus()
@@ -155,7 +180,7 @@ fun PlaybackControls(
         SeekBar(
             player = playerControls,
             controllerViewState = controllerViewState,
-            onSeekProgress = onSeekProgress,
+            onSeek = onSeek,
             interactionSource = seekBarInteractionSource,
             isEnabled = seekEnabled,
             intervals = seekBarIntervals,
@@ -189,6 +214,7 @@ fun PlaybackControls(
                 seekBack = seekBack,
                 seekForward = seekForward,
                 skipBackOnResume = skipBackOnResume,
+                onPlayPauseClick = onPlayPauseClick,
                 modifier = Modifier.align(Alignment.Center),
             )
             Row(
@@ -225,7 +251,7 @@ fun SeekBar(
     isEnabled: Boolean,
     intervals: Int,
     controllerViewState: ControllerViewState,
-    onSeekProgress: (Long) -> Unit,
+    onSeek: (Long) -> Unit,
     seekBack: Duration,
     seekForward: Duration,
     modifier: Modifier = Modifier,
@@ -249,9 +275,7 @@ fun SeekBar(
         IntervalSeekBarImpl(
             progress = progress,
             bufferedProgress = bufferedProgress,
-            onSeek = {
-                onSeekProgress(it)
-            },
+            onSeek = onSeek,
             controllerViewState = controllerViewState,
 //            intervals = intervals,
             modifier = Modifier.fillMaxWidth(),
@@ -363,6 +387,7 @@ fun PlaybackButtons(
     seekBack: Duration,
     skipBackOnResume: Duration?,
     seekForward: Duration,
+    onPlayPauseClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -389,17 +414,7 @@ fun PlaybackButtons(
         PlaybackButton(
             modifier = Modifier.focusRequester(initialFocusRequester),
             iconRes = if (showPlay) R.drawable.baseline_play_arrow_24 else R.drawable.baseline_pause_24,
-            onClick = {
-                onControllerInteraction.invoke()
-                if (showPlay) {
-                    player.play()
-                    skipBackOnResume?.let {
-                        player.seekBack(it)
-                    }
-                } else {
-                    player.pause()
-                }
-            },
+            onClick = onPlayPauseClick,
             onControllerInteraction = onControllerInteraction,
         )
         PlaybackButton(

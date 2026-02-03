@@ -432,6 +432,30 @@ fun NavDrawer(
                         item {
                             val interactionSource = remember { MutableInteractionSource() }
                             val focused by interactionSource.collectIsFocusedAsState()
+                            LaunchedEffect(focused) { if (focused) focusedIndex = -3 }
+                            if (preferences.appPreferences.interfacePreferences.syncplayPreferences.enableSyncplay) {
+                                IconNavItem(
+                                    text = stringResource(R.string.syncplay_title),
+                                    icon = Icons.Default.Settings,
+                                    selected = false,
+                                    drawerOpen = drawerState.isOpen,
+                                    interactionSource = interactionSource,
+                                    onClick = {
+                                        // Navigate to SyncPlay management screen
+                                        viewModel.navigationManager.navigateToFromDrawer(Destination.SyncPlay)
+                                    },
+                                    modifier =
+                                        Modifier
+                                            .ifElse(
+                                                selectedIndex == -3,
+                                                Modifier.focusRequester(focusRequester),
+                                            ).animateItem(),
+                                )
+                            }
+                        }
+                        item {
+                            val interactionSource = remember { MutableInteractionSource() }
+                            val focused by interactionSource.collectIsFocusedAsState()
                             LaunchedEffect(focused) { if (focused) focusedIndex = -2 }
                             IconNavItem(
                                 text = stringResource(R.string.search),

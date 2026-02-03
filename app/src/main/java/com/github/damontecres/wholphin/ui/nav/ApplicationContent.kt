@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.saveable.rememberSerializable
 import androidx.compose.ui.Alignment
@@ -33,6 +34,7 @@ import androidx.navigation3.runtime.serialization.NavBackStackSerializer
 import androidx.navigation3.runtime.serialization.NavKeySerializer
 import androidx.navigation3.ui.NavDisplay
 import androidx.tv.material3.MaterialTheme
+import com.github.damontecres.wholphin.services.SyncPlayManager
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.transitionFactory
@@ -46,6 +48,7 @@ import com.github.damontecres.wholphin.ui.CrossFadeFactory
 import com.github.damontecres.wholphin.ui.components.ErrorMessage
 import com.github.damontecres.wholphin.ui.launchIO
 import dagger.hilt.android.lifecycle.HiltViewModel
+import timber.log.Timber
 import javax.inject.Inject
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -91,6 +94,47 @@ fun ApplicationContent(
     navigationManager.backStack = backStack
     val backdrop by viewModel.backdropService.backdropFlow.collectAsStateWithLifecycle()
     val backdropStyle = preferences.appPreferences.interfacePreferences.backdropStyle
+    
+    // SyncPlay enable/disable based on preferences
+    val isSyncPlayEnabled = preferences.appPreferences.interfacePreferences.syncplayPreferences.enableSyncplay
+    val context = LocalContext.current
+    val syncPlayManager = (context as? com.github.damontecres.wholphin.MainActivity)?.syncPlayManager
+    
+    // Monitor SyncPlay enabled state and enable/disable accordingly
+    LaunchedEffect(isSyncPlayEnabled) {
+        if (syncPlayManager != null) {
+            if (isSyncPlayEnabled) {
+                Timber.i("🎬 SyncPlay enabled in preferences, activating...")
+                syncPlayManager.enableSyncPlay()
+            } else {
+                Timber.i("🎬 SyncPlay disabled in preferences, deactivating...")
+                syncPlayManager.disableSyncPlay()
+            }
+        }
+    }
+    
+    // Global SyncPlay navigation handler: listen for Play commands and navigate via MainActivity SyncPlayManager
+    if (syncPlayManager != null) {
+        val globalSyncPlayCommand by syncPlayManager.playbackCommands.collectAsStateWithLifecycle()
+        androidx.compose.runtime.LaunchedEffect(globalSyncPlayCommand) {
+            when (val cmd = globalSyncPlayCommand) {
+                is com.github.damontecres.wholphin.services.SyncPlayCommand.Play -> {
+                    val firstItemId = cmd.itemIds.getOrNull(cmd.startIndex) ?: cmd.itemIds.firstOrNull()
+                    Timber.i("🎬 Global SyncPlay Play received: items=%d startIndex=%d position=%d", cmd.itemIds.size, cmd.startIndex, cmd.startPositionMs)
+                    if (firstItemId != null) {
+                        Timber.i("🎬 Navigating to playback item %s at %dms", firstItemId, cmd.startPositionMs)
+                        navigationManager.navigateTo(
+                            Destination.Playback(
+                                itemId = firstItemId,
+                                positionMs = cmd.startPositionMs,
+                            ),
+                        )
+                    }
+                }
+                else -> { /* no-op for other commands here */ }
+            }
+        }
+    }
     Box(
         modifier = modifier,
     ) {
