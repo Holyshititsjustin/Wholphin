@@ -53,6 +53,7 @@ sealed class SyncPlayCommand {
     data class Seek(val positionMs: Long) : SyncPlayCommand()
     data class SetPlaybackRate(val rate: Float) : SyncPlayCommand()
     data class Play(val itemIds: List<UUID>, val startPositionMs: Long, val startIndex: Int) : SyncPlayCommand()
+    data class Buffering(val itemId: UUID) : SyncPlayCommand() // Buffering/Loading state - wait for all clients ready
 }
 
 @ActivityScoped
@@ -90,6 +91,10 @@ class SyncPlayManager @Inject constructor(
     // Playback commands from server
     private val _playbackCommands = MutableStateFlow<SyncPlayCommand?>(null)
     val playbackCommands: StateFlow<SyncPlayCommand?> = _playbackCommands.asStateFlow()
+    
+    // Track if we're waiting for other clients to be ready before playback
+    private val _isBuffering = MutableStateFlow(false)
+    val isBuffering: StateFlow<Boolean> = _isBuffering.asStateFlow()
 
     private var subscriptionJob: Job? = null
     private var driftCheckJob: Job? = null
@@ -105,6 +110,58 @@ class SyncPlayManager @Inject constructor(
 
     // Track last remote item to avoid spamming play commands
     private var lastRemoteItemId: UUID? = null
+    
+    /**
+     * Signal that this device is ready to play (has buffered the media).
+     * Server will wait for all clients to report ready before syncing playback.
+     * This must be called BEFORE pressing the play button.
+     */
+    fun reportBufferingComplete(itemId: UUID) {
+        if (!_isSyncPlayActive.value || _currentGroupId.value == null) return
+        
+        coroutineScope.launch {
+            try {
+                val accessToken = serverRepository.current.value?.user?.accessToken
+                val baseUrl = currentBaseUrl()
+                if (accessToken != null && baseUrl != null) {
+                    val url = "$baseUrl/SyncPlay/BufferingDone?api_key=$accessToken"
+                    val whenIso = Instant.ofEpochMilli(System.currentTimeMillis()).toString()
+                    val playlistItemIdString = formatSyncPlayId(itemId)
+                    val requestBodyJson = """
+                        {
+                            "when": "$whenIso",
+                            "positionTicks": 0,
+                            "isPlaying": false,
+                            "playlistItemId": "$playlistItemIdString"
+                        }
+                    """.trimIndent()
+                    val request = Request.Builder()
+                        .url(url)
+                        .post(requestBodyJson.toRequestBody("application/json".toMediaType()))
+                        .build()
+                    
+                    okHttpClient.newCall(request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            Timber.i("✅ Reported buffering complete for item %s - server will wait for all clients", itemId)
+                        } else {
+                            Timber.w("❌ Failed to report buffering done: HTTP %d", response.code)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Error reporting buffering complete")
+            }
+        }
+    }
+    
+    /**
+     * Signal that buffering is complete and we're ready to play.
+     * Wrapper for easier use from Composables.
+     */
+    fun setBufferingComplete(itemId: UUID) {
+        _isBuffering.value = false
+        reportBufferingComplete(itemId)
+    }
 
     fun setLocalPlaybackItemId(itemId: UUID?) {
         if (itemId == null) return

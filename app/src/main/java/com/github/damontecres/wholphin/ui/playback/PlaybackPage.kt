@@ -269,6 +269,20 @@ fun PlaybackPage(
                     syncPlayManager?.stopPositionReporting()
                 }
             }
+            
+            // When media becomes ready and SyncPlay is active, notify server we're ready
+            // This tells server this device has buffered and is ready for synchronized playback
+            LaunchedEffect(isSyncPlayActive, playbackState) {
+                if (isSyncPlayActive && syncPlayManager != null && currentPlayback != null) {
+                    // When player reaches STATE_READY, media is buffered and ready to play
+                    if (playbackState == Player.STATE_READY && !player.isPlaying) {
+                        Timber.i("🎬 Media ready! Reporting buffering complete for synchronized playback")
+                        currentPlayback?.item?.id?.let { itemId ->
+                            syncPlayManager.reportBufferingComplete(itemId)
+                        }
+                    }
+                }
+            }
 
             // Stop SyncPlay operations when playback ends
             LifecycleStartEffect(Unit) {
@@ -332,13 +346,27 @@ fun PlaybackPage(
                             timber.log.Timber.i("🎬 Page-level SyncPlay Play received: items=%d startIndex=%d position=%d", command.itemIds.size, command.startIndex, command.startPositionMs)
                             if (firstItemId != null) {
                                 timber.log.Timber.i("🎬 Page-level navigate to %s at %dms", firstItemId, command.startPositionMs)
+                                // Enter buffering state first - load media but don't play yet
+                                // Once media is loaded, we'll send BufferingComplete to server
+                                // Server waits for all clients to be ready before syncing playback
                                 viewModel.navigationManager.navigateTo(
                                     com.github.damontecres.wholphin.ui.nav.Destination.Playback(
                                         itemId = firstItemId,
                                         positionMs = command.startPositionMs
-                                    )
+                                    ),
                                 )
                             }
+                        }
+                        is com.github.damontecres.wholphin.services.SyncPlayCommand.Buffering -> {
+                            // Intermediate state: device is loading media, waiting for all clients to buffer
+                            Timber.i("🎬 🔄 Page-level SyncPlay Buffering received: itemId=%s", command.itemId)
+                            // Navigate to playback but keep player paused
+                            viewModel.navigationManager.navigateTo(
+                                com.github.damontecres.wholphin.ui.nav.Destination.Playback(
+                                    itemId = command.itemId,
+                                    positionMs = 0
+                                ),
+                            )
                         }
                     }
                 }
