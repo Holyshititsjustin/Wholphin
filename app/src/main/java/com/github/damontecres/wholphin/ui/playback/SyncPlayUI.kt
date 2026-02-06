@@ -39,6 +39,7 @@ import org.jellyfin.sdk.model.api.GroupInfoDto
 fun SyncPlayDialog(
     syncPlayManager: SyncPlayManager,
     onDismiss: () -> Unit,
+    preferences: com.github.damontecres.wholphin.preferences.UserPreferences? = null,
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -46,6 +47,8 @@ fun SyncPlayDialog(
     val currentGroupId by syncPlayManager.currentGroupId.collectAsState()
     val groupMembers by syncPlayManager.groupMembers.collectAsState()
     val availableGroups by syncPlayManager.availableGroups.collectAsState()
+    val notifyUserJoins =
+        preferences?.appPreferences?.interfacePreferences?.syncplayPreferences?.notifyUserJoins == true
 
     // Refresh groups when dialog opens to discover existing groups
     LaunchedEffect(Unit) {
@@ -57,9 +60,11 @@ fun SyncPlayDialog(
     LaunchedEffect(syncPlayMessage) {
         when (syncPlayMessage) {
             is SyncPlayMessage.UserJoined -> {
-                val userName = (syncPlayMessage as SyncPlayMessage.UserJoined).userName
-                coroutineScope.launch {
-                    showToast(context, "👋 $userName joined SyncPlay")
+                if (notifyUserJoins) {
+                    val userName = (syncPlayMessage as SyncPlayMessage.UserJoined).userName
+                    coroutineScope.launch {
+                        showToast(context, "👋 $userName joined SyncPlay")
+                    }
                 }
             }
             is SyncPlayMessage.CommandSent -> {
@@ -293,7 +298,8 @@ fun SyncPlayManagementPage(
     ) {
         SyncPlayDialog(
             syncPlayManager = syncPlayManager,
-            onDismiss = {} // Empty as we're on a full page
+            onDismiss = {}, // Empty as we're on a full page
+            preferences = preferences,
         )
     }
 }

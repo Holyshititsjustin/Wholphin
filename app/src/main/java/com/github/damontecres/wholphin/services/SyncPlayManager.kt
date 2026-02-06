@@ -48,12 +48,13 @@ sealed class SyncPlayMessage {
 }
 
 sealed class SyncPlayCommand {
-    data class Pause(val positionMs: Long) : SyncPlayCommand()
-    data class Unpause(val positionMs: Long) : SyncPlayCommand()
-    data class Seek(val positionMs: Long) : SyncPlayCommand()
-    data class SetPlaybackRate(val rate: Float) : SyncPlayCommand()
-    data class Play(val itemIds: List<UUID>, val startPositionMs: Long, val startIndex: Int) : SyncPlayCommand()
-    data class Buffering(val itemId: UUID) : SyncPlayCommand() // Buffering/Loading state - wait for all clients ready
+    data class Pause(val positionMs: Long, val timestamp: Long = System.currentTimeMillis()) : SyncPlayCommand()
+    data class Unpause(val positionMs: Long, val timestamp: Long = System.currentTimeMillis()) : SyncPlayCommand()
+    data class Seek(val positionMs: Long, val timestamp: Long = System.currentTimeMillis()) : SyncPlayCommand()
+    data class SetPlaybackRate(val rate: Float, val timestamp: Long = System.currentTimeMillis()) : SyncPlayCommand()
+    data class Play(val itemIds: List<UUID>, val startPositionMs: Long, val startIndex: Int, val timestamp: Long = System.currentTimeMillis()) : SyncPlayCommand()
+    data class Buffering(val itemId: UUID, val timestamp: Long = System.currentTimeMillis()) : SyncPlayCommand() // Buffering/Loading state - wait for all clients ready
+    data class Stop(val timestamp: Long = System.currentTimeMillis()) : SyncPlayCommand() // Stop playback and exit video
 }
 
 @ActivityScoped
@@ -102,6 +103,7 @@ class SyncPlayManager @Inject constructor(
     private var lastUpdateTime = System.currentTimeMillis()
     private var webSocket: WebSocket? = null
     private var webSocketConnected = false  // Track actual connection state
+    private var lastWebSocketEventTime = 0L
     private var refreshGroupsJob: Job? = null
     private var sessionsPollingJob: Job? = null
     private var disablePolling = false
@@ -110,6 +112,44 @@ class SyncPlayManager @Inject constructor(
 
     // Track last remote item to avoid spamming play commands
     private var lastRemoteItemId: UUID? = null
+    
+    // Track last emitted Play command to prevent restart loops
+    private var lastEmittedPlayCommand: SyncPlayCommand.Play? = null
+    private var lastEmittedPlayTime = 0L
+    private val PLAY_COMMAND_COOLDOWN_MS = 10000L // 10 seconds between Play commands for same item
+    
+    // Track last executed command to prevent duplicates
+    private var lastExecutedCommand: SyncPlayCommand? = null
+    private var lastExecutedCommandTime = 0L
+    private val COMMAND_DEDUPE_WINDOW_MS = 5000L // 5 seconds window for deduplication (server can spam commands)
+    
+    // Track if we're currently executing a command to prevent local actions
+    val _isExecutingRemoteCommand = MutableStateFlow(false)
+    val isExecutingRemoteCommand: StateFlow<Boolean> = _isExecutingRemoteCommand.asStateFlow()
+    private var executionTimeoutJob: Job? = null
+    private val EXECUTION_TIMEOUT_MS = 5000L // 5 seconds max for command execution
+    
+    // Network latency tracking for dynamic drift tolerance
+    private var lastPingMs = 0L
+    private val _estimatedLatency = MutableStateFlow(50L) // Default 50ms
+    val estimatedLatency: StateFlow<Long> = _estimatedLatency.asStateFlow()
+    
+    // Local command throttling to prevent spam
+    private var lastLocalPauseTime = 0L
+    private var lastLocalUnpauseTime = 0L
+    private val LOCAL_COMMAND_THROTTLE_MS = 500L // Minimum 500ms between same commands
+    
+    // Position reporting optimization
+    private var lastReportedPosition = -1L
+    private val MIN_POSITION_CHANGE_MS = 100L // Only report if position changed by 100ms
+    
+    /**
+     * Calculate dynamic drift tolerance based on network latency
+     * Minimum 500ms, scales up with network latency
+     */
+    fun getDriftTolerance(): Long {
+        return maxOf(500L, _estimatedLatency.value * 2)
+    }
     
     /**
      * Signal that this device is ready to play (has buffered the media).
@@ -124,15 +164,19 @@ class SyncPlayManager @Inject constructor(
                 val accessToken = serverRepository.current.value?.user?.accessToken
                 val baseUrl = currentBaseUrl()
                 if (accessToken != null && baseUrl != null) {
-                    val url = "$baseUrl/SyncPlay/BufferingDone?api_key=$accessToken"
+                    // Use /SyncPlay/Ready instead of /BufferingDone
+                    val url = "$baseUrl/SyncPlay/Ready?api_key=$accessToken"
                     val whenIso = Instant.ofEpochMilli(System.currentTimeMillis()).toString()
                     val playlistItemIdString = formatSyncPlayId(itemId)
+                    // Server expects requestData wrapper
                     val requestBodyJson = """
                         {
-                            "when": "$whenIso",
-                            "positionTicks": 0,
-                            "isPlaying": false,
-                            "playlistItemId": "$playlistItemIdString"
+                            "requestData": {
+                                "When": "$whenIso",
+                                "PositionTicks": 0,
+                                "IsPlaying": false,
+                                "PlaylistItemId": "$playlistItemIdString"
+                            }
                         }
                     """.trimIndent()
                     val request = Request.Builder()
@@ -142,9 +186,9 @@ class SyncPlayManager @Inject constructor(
                     
                     okHttpClient.newCall(request).execute().use { response ->
                         if (response.isSuccessful) {
-                            Timber.i("✅ Reported buffering complete for item %s - server will wait for all clients", itemId)
+                            Timber.i("✅ Reported ready (buffering complete) for item %s - server will sync all clients", itemId)
                         } else {
-                            Timber.w("❌ Failed to report buffering done: HTTP %d", response.code)
+                            Timber.w("❌ Failed to report ready: HTTP %d", response.code)
                         }
                     }
                 }
@@ -296,6 +340,14 @@ class SyncPlayManager @Inject constructor(
                 try {
                     val position = getPosition()
                     val groupId = currentGroupId.value ?: return@launch
+                    
+                    // Optimization: Skip reporting if position hasn't changed significantly
+                    val positionChange = Math.abs(position - lastReportedPosition)
+                    if (lastReportedPosition >= 0 && positionChange < MIN_POSITION_CHANGE_MS) {
+                        Timber.d("⏭️ Skipping position report - change too small: ${positionChange}ms")
+                        delay(1000)
+                        continue
+                    }
 
                     // Report playback position to server via /SyncPlay/Ready endpoint
                     val positionTicks = position * 10000L // Convert ms to ticks (100ns units)
@@ -306,6 +358,7 @@ class SyncPlayManager @Inject constructor(
                         val url = "$baseUrl/SyncPlay/Ready?api_key=$accessToken"
                         val playlistItemIdString = formatSyncPlayId(playlistItemId)
                         val whenIso = Instant.ofEpochMilli(System.currentTimeMillis()).toString()
+                        // Server expects requestData wrapper
                         val requestBodyJson = """
                             {
                                 "requestData": {
@@ -323,6 +376,7 @@ class SyncPlayManager @Inject constructor(
                         
                         okHttpClient.newCall(request).execute().use { response ->
                             if (response.isSuccessful) {
+                                lastReportedPosition = position
                                 Timber.d("✅ Reported ready status to /SyncPlay/Ready: position=$position ms ($positionTicks ticks) itemId=$playlistItemId")
                             } else {
                                 val errorBody = response.body?.string()
@@ -350,6 +404,7 @@ class SyncPlayManager @Inject constructor(
         positionReportingJob?.cancel()
         positionReportingJob = null
         _reportingPlaybackPosition.value = false
+        lastReportedPosition = -1L // Reset for next session
     }
 
     /**
@@ -535,30 +590,100 @@ class SyncPlayManager @Inject constructor(
     fun joinGroup(groupId: UUID) {
         coroutineScope.launch {
             try {
+                Timber.i("🎬🔗 Starting join process for group: $groupId")
+
+                // Ensure server knows this client supports SyncPlay
+                postSyncPlayCapabilities()
+                
+                // Step 1: Join the group via API
                 joinGroupRemote(groupId)
                 _currentGroupId.value = groupId
                 _isSyncPlayActive.value = true
                 _syncPlayMessages.value = SyncPlayMessage.GroupJoined(groupId, emptyList())
-                Timber.d("Joined group via Jellyfin API: $groupId")
-                Timber.i("CALLING startListening() now...")
+                Timber.i("✅ Joined group via Jellyfin API: $groupId")
+                
+                // Step 2: Ensure WebSocket is connected
+                Timber.i("🔗 Ensuring WebSocket is connected...")
                 startListening()
-                Timber.i("CALLING startSessionsPolling() now...")
+                delay(1000) // Give WebSocket time to establish connection
+                
+                // Step 3: Start polling for group state
+                Timber.i("🔄 Starting sessions polling...")
                 startSessionsPolling()
                 
-                // RE-ENABLED: Send Ready message after joining
-                Timber.i("CALLING sendReadyAfterJoin() now...")
+                // Step 4: Send Ready message to request current playlist
+                Timber.i("📤 Sending Ready message to request playlist...")
                 delay(500) // Allow server to process join first
                 sendReadyAfterJoin(groupId)
+                
+                // Step 5: Explicitly request current group info via REST API
+                Timber.i("📡 Requesting current group state...")
+                delay(500)
+                requestGroupState(groupId)
+                
+                Timber.i("✅ Join process complete - listening for updates")
             } catch (e: Exception) {
-                Timber.e(e, "Error joining group")
+                Timber.e(e, "❌ Error joining group")
                 _syncPlayMessages.value = SyncPlayMessage.Error(e.message ?: "Unknown error")
             }
+        }
+    }
+    
+    /**
+     * Explicitly request the current group state from the server
+     * This helps sync up with groups that are already playing
+     */
+    private suspend fun requestGroupState(groupId: UUID) {
+        try {
+            val accessToken = serverRepository.current.value?.user?.accessToken
+            val baseUrl = currentBaseUrl()
+            if (accessToken != null && baseUrl != null) {
+                // Query current group info
+                val url = "$baseUrl/SyncPlay/List?api_key=$accessToken"
+                Timber.i("📡 Explicitly requesting group state from: $url")
+                val request = Request.Builder().url(url).build()
+                
+                okHttpClient.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val body = response.body?.string()
+                        if (body != null) {
+                            Timber.i("📡 Group state response: $body")
+                            val groupsArray = json.parseToJsonElement(body).jsonArray
+                            
+                            for (groupElement in groupsArray) {
+                                val groupObj = groupElement.jsonObject
+                                val gidStr = groupObj["GroupId"]?.jsonPrimitive?.content
+                                val gidUuid = gidStr?.let { parseUUID(it) }
+                                
+                                if (gidUuid == groupId) {
+                                    val state = groupObj["State"]?.jsonPrimitive?.content
+                                    Timber.i("📡 Found group $groupId with state: $state")
+                                    
+                                    // If group is Playing, trigger polling to pick up the playlist
+                                    if (state == "Playing") {
+                                        Timber.i("🎬 Group is already Playing - triggering immediate poll")
+                                        queryRemotePlaybackItem(groupId)
+                                    }
+                                    break
+                                }
+                            }
+                        }
+                    } else {
+                        Timber.w("⚠️ Failed to request group state: HTTP ${response.code}")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "⚠️ Error requesting group state")
         }
     }
 
     fun createGroup() {
         coroutineScope.launch {
             try {
+                // Ensure server knows this client supports SyncPlay
+                postSyncPlayCapabilities()
+
                 val newGroupId = createGroupRemote()
                 Timber.d("Created group via Jellyfin API: $newGroupId")
                 // Must explicitly join the created group
@@ -598,15 +723,28 @@ class SyncPlayManager @Inject constructor(
     }
 
     fun pause() {
+        Timber.i("🎬 pause() called - sending Pause command to server")
+        
+        // Throttle: Don't send if we just sent a pause recently
+        val now = System.currentTimeMillis()
+        if (now - lastLocalPauseTime < LOCAL_COMMAND_THROTTLE_MS) {
+            Timber.d("⏭️ Throttling pause command - last sent ${now - lastLocalPauseTime}ms ago")
+            return
+        }
+        lastLocalPauseTime = now
+        
         coroutineScope.launch {
             try {
                 val groupId = _currentGroupId.value
+                Timber.d("🔍 pause(): groupId=$groupId")
                 if (groupId != null) {
                     // Send pause command via direct HTTP call
                     val accessToken = serverRepository.current.value?.user?.accessToken
                     val baseUrl = currentBaseUrl()
+                    Timber.d("🔍 pause(): accessToken=${accessToken != null}, baseUrl=$baseUrl")
                     if (accessToken != null && baseUrl != null) {
                         val url = "$baseUrl/SyncPlay/Pause?api_key=$accessToken"
+                        Timber.i("📤 Sending Pause to: $url")
                         val request = Request.Builder()
                             .url(url)
                             .post(ByteString.EMPTY.toRequestBody("application/json".toMediaType()))
@@ -614,15 +752,18 @@ class SyncPlayManager @Inject constructor(
 
                         okHttpClient.newCall(request).execute().use { response ->
                             if (response.isSuccessful) {
-                                Timber.i("✅ Sent pause command to SyncPlay group: $groupId")
+                                Timber.i("✅ Sent pause command to SyncPlay group: $groupId (HTTP ${response.code})")
                                 _syncPlayMessages.value = SyncPlayMessage.CommandSent("Pause")
                             } else {
-                                Timber.w("❌ Failed to send pause command to group $groupId: HTTP ${response.code} - ${response.message}")
+                                val errorBody = response.body?.string()
+                                Timber.w("❌ Failed to send pause command to group $groupId: HTTP ${response.code} - ${response.message}, body: $errorBody")
                             }
                         }
                     } else {
                         Timber.w("❌ Cannot send pause command: missing access token or base URL")
                     }
+                } else {
+                    Timber.w("❌ Cannot send pause command: not in a SyncPlay group")
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Error pausing SyncPlay")
@@ -631,15 +772,28 @@ class SyncPlayManager @Inject constructor(
     }
 
     fun unpause() {
+        Timber.i("🎬 unpause() called - sending Unpause command to server")
+        
+        // Throttle: Don't send if we just sent an unpause recently
+        val now = System.currentTimeMillis()
+        if (now - lastLocalUnpauseTime < LOCAL_COMMAND_THROTTLE_MS) {
+            Timber.d("⏭️ Throttling unpause command - last sent ${now - lastLocalUnpauseTime}ms ago")
+            return
+        }
+        lastLocalUnpauseTime = now
+        
         coroutineScope.launch {
             try {
                 val groupId = _currentGroupId.value
+                Timber.d("🔍 unpause(): groupId=$groupId")
                 if (groupId != null) {
                     // Send unpause command via direct HTTP call
                     val accessToken = serverRepository.current.value?.user?.accessToken
                     val baseUrl = currentBaseUrl()
+                    Timber.d("🔍 unpause(): accessToken=${accessToken != null}, baseUrl=$baseUrl")
                     if (accessToken != null && baseUrl != null) {
                         val url = "$baseUrl/SyncPlay/Unpause?api_key=$accessToken"
+                        Timber.i("📤 Sending Unpause to: $url")
                         val request = Request.Builder()
                             .url(url)
                             .post(ByteString.EMPTY.toRequestBody("application/json".toMediaType()))
@@ -647,15 +801,18 @@ class SyncPlayManager @Inject constructor(
 
                         okHttpClient.newCall(request).execute().use { response ->
                             if (response.isSuccessful) {
-                                Timber.i("✅ Sent unpause command to SyncPlay group: $groupId")
+                                Timber.i("✅ Sent unpause command to SyncPlay group: $groupId (HTTP ${response.code})")
                                 _syncPlayMessages.value = SyncPlayMessage.CommandSent("Resume")
                             } else {
-                                Timber.w("❌ Failed to send unpause command to group $groupId: HTTP ${response.code} - ${response.message}")
+                                val errorBody = response.body?.string()
+                                Timber.w("❌ Failed to send unpause command to group $groupId: HTTP ${response.code} - ${response.message}, body: $errorBody")
                             }
                         }
                     } else {
                         Timber.w("❌ Cannot send unpause command: missing access token or base URL")
                     }
+                } else {
+                    Timber.w("❌ Cannot send unpause command: not in a SyncPlay group")
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Error unpausing SyncPlay")
@@ -678,6 +835,92 @@ class SyncPlayManager @Inject constructor(
             }
         }
     }
+    
+    /**
+     * Check if a command is a duplicate of the last executed command
+     * within the deduplication window
+     */
+    private fun isDuplicateCommand(command: SyncPlayCommand): Boolean {
+        val now = System.currentTimeMillis()
+        val lastCmd = lastExecutedCommand
+        
+        // Check if within deduplication window
+        val timeSinceLastCommand = now - lastExecutedCommandTime
+        if (timeSinceLastCommand > COMMAND_DEDUPE_WINDOW_MS) {
+            Timber.d("🔍 Not duplicate: time since last command ${timeSinceLastCommand}ms > ${COMMAND_DEDUPE_WINDOW_MS}ms")
+            return false
+        }
+        
+        // Check if commands are equivalent
+        val driftTolerance = getDriftTolerance()
+        val isDuplicate = when {
+            command is SyncPlayCommand.Pause && lastCmd is SyncPlayCommand.Pause -> {
+                val drift = Math.abs(command.positionMs - lastCmd.positionMs)
+                val result = drift < driftTolerance
+                Timber.d("🔍 Pause command: drift=${drift}ms, tolerance=${driftTolerance}ms, isDuplicate=$result")
+                result
+            }
+            command is SyncPlayCommand.Unpause && lastCmd is SyncPlayCommand.Unpause -> {
+                val drift = Math.abs(command.positionMs - lastCmd.positionMs)
+                val result = drift < driftTolerance
+                Timber.d("🔍 Unpause command: drift=${drift}ms, tolerance=${driftTolerance}ms, isDuplicate=$result")
+                result
+            }
+            command is SyncPlayCommand.Seek && lastCmd is SyncPlayCommand.Seek -> {
+                val drift = Math.abs(command.positionMs - lastCmd.positionMs)
+                val result = drift < driftTolerance
+                Timber.d("🔍 Seek command: drift=${drift}ms, tolerance=${driftTolerance}ms, isDuplicate=$result")
+                result
+            }
+            command is SyncPlayCommand.Play && lastCmd is SyncPlayCommand.Play -> {
+                val result = command.itemIds.firstOrNull() == lastCmd.itemIds.firstOrNull()
+                Timber.d("🔍 Play command: same item=$result")
+                result
+            }
+            else -> {
+                Timber.d("🔍 Different command types: current=${command::class.simpleName}, last=${lastCmd?.let { it::class.simpleName }}")
+                false
+            }
+        }
+        
+        if (isDuplicate) {
+            Timber.w("⚠️ DUPLICATE COMMAND DETECTED: $command (within ${timeSinceLastCommand}ms of last)")
+        }
+        
+        return isDuplicate
+    }
+    
+    /**
+     * Mark a command as executed for deduplication
+     */
+    fun markCommandExecuted(command: SyncPlayCommand) {
+        lastExecutedCommand = command
+        lastExecutedCommandTime = System.currentTimeMillis()
+        Timber.d("✅ Marked command as executed: ${command::class.simpleName} at ${lastExecutedCommandTime}")
+    }
+    
+    /**
+     * Start execution flag timeout watchdog
+     * If command takes too long, force clear the flag to prevent deadlock
+     */
+    fun startExecutionTimeout() {
+        executionTimeoutJob?.cancel()
+        executionTimeoutJob = coroutineScope.launch {
+            delay(EXECUTION_TIMEOUT_MS)
+            if (_isExecutingRemoteCommand.value) {
+                Timber.w("⚠️ EXECUTION TIMEOUT: Command took >${EXECUTION_TIMEOUT_MS}ms, forcing flag clear to prevent deadlock")
+                _isExecutingRemoteCommand.value = false
+            }
+        }
+    }
+    
+    /**
+     * Cancel execution timeout watchdog
+     */
+    fun cancelExecutionTimeout() {
+        executionTimeoutJob?.cancel()
+        executionTimeoutJob = null
+    }
 
     /**
      * Helper function to send Ready status after joining a group.
@@ -691,14 +934,14 @@ class SyncPlayManager @Inject constructor(
                 if (accessToken != null && baseUrl != null) {
                     val url = "$baseUrl/SyncPlay/Ready?api_key=$accessToken"
                     val whenIso = Instant.ofEpochMilli(System.currentTimeMillis()).toString()
-                    // When joining, we're at position 0 and not playing yet (waiting for server state)
+                    // Server expects requestData wrapper
                     val requestBodyJson = """
                         {
                             "requestData": {
                                 "When": "$whenIso",
                                 "PositionTicks": 0,
                                 "IsPlaying": false,
-                                "PlaylistItemId": ""
+                                "PlaylistItemId": "00000000000000000000000000000000"
                             }
                         }
                     """.trimIndent()
@@ -738,6 +981,7 @@ class SyncPlayManager @Inject constructor(
                     val url = "$baseUrl/SyncPlay/Ready?api_key=$accessToken"
                     val playlistItemIdString = formatSyncPlayId(itemId)
                     val whenIso = Instant.ofEpochMilli(System.currentTimeMillis()).toString()
+                    // Server expects requestData wrapper
                     val requestBodyJson = """
                         {
                             "requestData": {
@@ -772,7 +1016,19 @@ class SyncPlayManager @Inject constructor(
 
     private fun startListening() {
         Timber.i("startListening: Called - initializing WebSocket connection")
-        webSocket?.cancel()
+        if (webSocket != null && webSocketConnected) {
+            val now = System.currentTimeMillis()
+            val idleMs = now - lastWebSocketEventTime
+            if (idleMs < 15000L) {
+                Timber.i("startListening: WebSocket already connected (idle %dms), skipping reconnect", idleMs)
+                return
+            }
+            Timber.w("startListening: WebSocket connected but idle %dms, forcing reconnect", idleMs)
+        }
+        if (webSocket != null) {
+            Timber.i("startListening: Closing stale WebSocket before reconnect")
+            webSocket?.close(1000, "reconnecting")
+        }
         webSocketConnected = false  // Mark as disconnected when closing
         
         val accessToken = serverRepository.current.value?.user?.accessToken
@@ -800,6 +1056,7 @@ class SyncPlayManager @Inject constructor(
                 object : WebSocketListener() {
                     override fun onOpen(webSocket: WebSocket, response: Response) {
                         webSocketConnected = true  // Mark as connected
+                        lastWebSocketEventTime = System.currentTimeMillis()
                         Timber.i("WebSocket_onOpen: Connection opened successfully!")
                         
                         // Note: No explicit subscription messages needed - Jellyfin broadcasts automatically
@@ -808,18 +1065,21 @@ class SyncPlayManager @Inject constructor(
                     }
 
                     override fun onMessage(webSocket: WebSocket, text: String) {
+                        lastWebSocketEventTime = System.currentTimeMillis()
                         Timber.i("WebSocket_onMessage_Text: Received message: %s", text)
                         handleSocketMessage(text)
                     }
 
                     override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
                         val textMessage = bytes.utf8()
+                        lastWebSocketEventTime = System.currentTimeMillis()
                         Timber.i("WebSocket_onMessage_Bytes: Received message: %s", textMessage)
                         handleSocketMessage(textMessage)
                     }
 
                     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                         webSocketConnected = false  // Mark as disconnected
+                        lastWebSocketEventTime = System.currentTimeMillis()
                         Timber.e(t, "WebSocket_onFailure: Connection failed - will attempt reconnect")
                         _syncPlayMessages.value = SyncPlayMessage.Error("Connection lost")
                         refreshGroupsJob?.cancel()
@@ -829,12 +1089,14 @@ class SyncPlayManager @Inject constructor(
 
                     override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                         webSocketConnected = false  // Mark as disconnected
+                        lastWebSocketEventTime = System.currentTimeMillis()
                         Timber.w("WebSocket_onClosed: Closed with code=%d reason=%s - will attempt reconnect", code, reason)
                         // Set webSocket to null so init loop will reconnect
                         this@SyncPlayManager.webSocket = null
                     }
                     
                     override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                        lastWebSocketEventTime = System.currentTimeMillis()
                         Timber.w("WebSocket_onClosing: Closing with code=%d reason=%s", code, reason)
                         webSocket.close(1000, null)  // Acknowledge close
                     }
@@ -878,16 +1140,45 @@ class SyncPlayManager @Inject constructor(
                         val response = api.syncPlayApi.syncPlayGetGroups()
                         val groups = response.content
                         Timber.d("🔄🔢 SDK returned %d groups", groups.size)
-                        
-                        if (groupId != null) {
-                            val matchingGroup = groups.find { it.groupId.toJavaUuid() == groupId }
-                            if (matchingGroup != null) {
-                                checkForRemotePlayback(matchingGroup)
+
+                        val normalizedCurrentGroupId = groupId?.toString()?.replace("-", "")?.lowercase()
+                        if (groups.isNotEmpty()) {
+                            val groupIdsForLog = groups.mapNotNull { it.groupId?.toString() }
+                            Timber.d("🔄🧭 SDK groupIds=%s, currentGroupId=%s", groupIdsForLog, groupId)
+                        }
+
+                        val matchingGroup =
+                            if (groupId != null) {
+                                groups.find { sdkGroup ->
+                                    val sdkGroupId = sdkGroup.groupId?.toString()?.replace("-", "")?.lowercase()
+                                    sdkGroupId != null && sdkGroupId == normalizedCurrentGroupId
+                                }
                             } else {
+                                null
+                            }
+
+                        when {
+                            matchingGroup != null -> {
+                                checkForRemotePlayback(matchingGroup)
+                            }
+                            groupId == null -> {
+                                Timber.w("🔄⚠️ groupId is null")
+                                if (groups.size == 1) {
+                                    val fallbackGroup = groups.first()
+                                    Timber.w("🔄🟡 Using single SDK group as fallback: %s", fallbackGroup.groupId)
+                                    applyGroupDto(fallbackGroup)
+                                    checkForRemotePlayback(fallbackGroup)
+                                }
+                            }
+                            groups.size == 1 -> {
+                                val fallbackGroup = groups.first()
+                                Timber.w("🔄🟡 Matching group not found, but only one group exists. Using fallback groupId=%s", fallbackGroup.groupId)
+                                applyGroupDto(fallbackGroup)
+                                checkForRemotePlayback(fallbackGroup)
+                            }
+                            else -> {
                                 Timber.w("🔄❌ Matching group not found in SDK response")
                             }
-                        } else {
-                            Timber.w("🔄⚠️ groupId is null")
                         }
                     } catch (e: Exception) {
                         Timber.w(e, "🔄❌ Polling error on iteration %d", iteration)
@@ -909,6 +1200,9 @@ class SyncPlayManager @Inject constructor(
     private var lastReceivedPlaylist: List<UUID> = emptyList()
     private var lastReceivedPlaylistIndex: Int = 0
     private var lastReceivedPlaylistPositionMs: Long = 0L
+    
+    // Track if we've already emitted a Play command for current playlist to prevent restart loops
+    private var lastPlaylistEmittedHash: Int = 0
 
     private fun checkForRemotePlayback(group: GroupInfoDto) {
         try {
@@ -918,34 +1212,47 @@ class SyncPlayManager @Inject constructor(
             if (currentState != null && currentState != lastGroupState) {
                 Timber.i("📡 Group state changed from %s to %s", lastGroupState, currentState)
                 lastGroupState = currentState
-                
-                // Emit pause/unpause commands based on state change
+
+                // Only update local state from group status; actual pause/unpause
+                // should come from SyncPlayCommand messages to avoid false pauses.
                 when (currentState) {
-                    "Paused" -> {
-                        Timber.i("📡🔴 Detected group state PAUSED - emitting Pause command")
-                        // When group is paused, pause the local player
-                        // Use lastKnownPosition to resume from where we paused, not position 0
-                        _playbackCommands.value = SyncPlayCommand.Pause(lastKnownPosition)
-                    }
-                    "Playing" -> {
-                        Timber.i("📡🟢 Detected group state PLAYING - emitting Unpause command")
-                        // When group is playing, unpause the local player
-                        // Use lastKnownPosition to resume from where we were
-                        _playbackCommands.value = SyncPlayCommand.Unpause(lastKnownPosition)
-                    }
-                    "Waiting" -> {
-                        _isGroupPlaying.value = false
-                    }
+                    "Playing" -> _isGroupPlaying.value = true
+                    "Paused", "Waiting" -> _isGroupPlaying.value = false
                     else -> Timber.d("📡 Unknown group state: %s", currentState)
                 }
             }
 
-            // Always query playlist details for the current group; lastRemoteItemId prevents replays
-            coroutineScope.launch {
-                try {
-                    queryRemotePlaybackItem(group.groupId.toJavaUuid())
-                } catch (e: Exception) {
-                    Timber.w(e, "Error querying remote playback item")
+            // Only query playlist if we don't have cached data OR state just changed to Playing
+            if (lastReceivedPlaylist.isEmpty() || (currentState == "Playing" && lastGroupState != currentState)) {
+                // Always query playlist details for the current group
+                coroutineScope.launch {
+                    try {
+                        queryRemotePlaybackItem(group.groupId.toJavaUuid())
+                    } catch (e: Exception) {
+                        Timber.w(e, "Error querying remote playback item")
+                    }
+                }
+            } else if (lastReceivedPlaylist.isNotEmpty() && currentState == "Playing") {
+                // We have cached playlist and group is Playing
+                // Don't emit Play commands from polling when already playing - server sends commands via WebSocket
+                // Polling should only detect NEW playback, not maintain existing playback
+                if (!_isGroupPlaying.value) {
+                    // Group just transitioned to Playing - emit initial Play command
+                    val now = System.currentTimeMillis()
+                    val playlistHash = lastReceivedPlaylist.hashCode() + lastReceivedPlaylistIndex
+                    
+                    if (playlistHash != lastPlaylistEmittedHash || now - lastEmittedPlayTime > PLAY_COMMAND_COOLDOWN_MS) {
+                        Timber.i("📡 Group transitioned to Playing - emitting initial Play command")
+                        val cmd = SyncPlayCommand.Play(lastReceivedPlaylist, lastReceivedPlaylistPositionMs, lastReceivedPlaylistIndex)
+                        _playbackCommands.value = cmd
+                        lastEmittedPlayCommand = cmd
+                        lastEmittedPlayTime = now
+                        lastPlaylistEmittedHash = playlistHash
+                        lastRemoteItemId = lastReceivedPlaylist.getOrNull(lastReceivedPlaylistIndex)
+                    }
+                } else {
+                    // Already playing - don't emit more Play commands, server controls via WebSocket
+                    Timber.d("📡 Group already Playing - skipping redundant Play emission (server sends commands via WebSocket)")
                 }
             }
         } catch (e: Exception) {
@@ -1038,6 +1345,8 @@ class SyncPlayManager @Inject constructor(
                                             queryRemotePlaybackItem(groupId, attempt + 1)
                                             _isGroupPlaying.value = false
                                         } else {
+                                            Timber.w("📡⚠️ Playlist still empty after retries. Falling back to /Sessions to locate active playback.")
+                                            fallbackToSessionsPlayback()
                                             _isGroupPlaying.value = false
                                         }
                                     }
@@ -1057,6 +1366,75 @@ class SyncPlayManager @Inject constructor(
             }
         } catch (e: Exception) {
             Timber.e(e, "📡 Error querying remote playback item")
+        }
+    }
+
+    /**
+     * Fallback when SyncPlay/List does not include playlist data.
+     * Query /Sessions and start playback based on any participant's NowPlayingItem.
+     */
+    private suspend fun fallbackToSessionsPlayback() {
+        val accessToken = serverRepository.current.value?.user?.accessToken
+        val baseUrl = currentBaseUrl()
+        if (accessToken.isNullOrBlank() || baseUrl.isNullOrBlank()) {
+            Timber.w("📡⚠️ Cannot query /Sessions: missing access token or base URL")
+            return
+        }
+
+        val url = "$baseUrl/Sessions?api_key=$accessToken"
+        Timber.i("📡🔎 Fallback querying sessions: %s", url)
+        val request = Request.Builder().url(url).build()
+
+        runCatching {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Timber.w("📡⚠️ /Sessions request failed: HTTP %d - %s", response.code, response.message)
+                    return
+                }
+
+                val body = response.body?.string() ?: return
+                val sessions = json.parseToJsonElement(body).jsonArray
+
+                val participants = _groupMembers.value.toSet()
+                val deviceId = deviceInfo.id
+
+                val candidates = sessions.mapNotNull { sessionElement ->
+                    val session = sessionElement.jsonObject
+                    val userName = session["UserName"]?.jsonPrimitive?.content
+                    val sessionDeviceId = session["DeviceId"]?.jsonPrimitive?.content
+                    val nowPlaying = session["NowPlayingItem"]?.jsonObject
+                    val playState = session["PlayState"]?.jsonObject
+
+                    val itemIdStr = nowPlaying?.get("Id")?.jsonPrimitive?.content
+                    val positionTicks = playState?.get("PositionTicks")?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
+
+                    if (itemIdStr.isNullOrBlank() || userName.isNullOrBlank()) return@mapNotNull null
+                    if (!sessionDeviceId.isNullOrBlank() && sessionDeviceId == deviceId) return@mapNotNull null
+
+                    val itemUuid = parseUUID(itemIdStr) ?: return@mapNotNull null
+                    Triple(userName, itemUuid, positionTicks)
+                }
+
+                if (candidates.isEmpty()) {
+                    Timber.w("📡⚠️ /Sessions fallback found no active NowPlaying sessions")
+                    return
+                }
+
+                val preferred =
+                    candidates.firstOrNull { (userName, _, _) -> participants.isNotEmpty() && userName in participants }
+                        ?: candidates.first()
+
+                val (userName, itemUuid, positionTicks) = preferred
+                if (itemUuid != lastRemoteItemId) {
+                    val positionMs = positionTicks / 10000
+                    Timber.i("📡🎯 Fallback session playback: user=%s itemId=%s position=%dms", userName, itemUuid, positionMs)
+                    lastRemoteItemId = itemUuid
+                    _playbackCommands.value = SyncPlayCommand.Play(listOf(itemUuid), positionMs, 0)
+                    _isGroupPlaying.value = true
+                }
+            }
+        }.onFailure { e ->
+            Timber.e(e, "📡⚠️ Error querying /Sessions for fallback playback")
         }
     }
 
@@ -1091,14 +1469,63 @@ class SyncPlayManager @Inject constructor(
                         _isSyncPlayActive.value = false
                         _syncPlayMessages.value = SyncPlayMessage.GroupLeft("Server left")
                     }
+                    "UserJoinedGroup" -> {
+                        val userName = data?.get("UserName")?.jsonPrimitive?.content
+                            ?: data?.get("Username")?.jsonPrimitive?.content
+                        if (userName != null) {
+                            Timber.i("👤 User joined group: %s", userName)
+                            _syncPlayMessages.value = SyncPlayMessage.UserJoined(userName)
+                        }
+                    }
+                    "UserLeftGroup" -> {
+                        val userName = data?.get("UserName")?.jsonPrimitive?.content
+                            ?: data?.get("Username")?.jsonPrimitive?.content
+                        if (userName != null) {
+                            Timber.i("👤 User left group: %s", userName)
+                            _syncPlayMessages.value = SyncPlayMessage.UserLeft(userName)
+                        }
+                    }
+                    "SyncPlayLibraryAccessDeniedUpdate" -> {
+                        Timber.e("🚫 Library access denied - user lacks permission to view group content")
+                        _syncPlayMessages.value = SyncPlayMessage.Error("Library access denied")
+                        // Auto-leave group since we can't access content
+                        leaveGroup()
+                    }
+                    "SyncPlayGroupDoesNotExistUpdate" -> {
+                        Timber.e("🚫 Group does not exist - may have been deleted")
+                        _syncPlayMessages.value = SyncPlayMessage.Error("Group no longer exists")
+                        _currentGroupId.value = null
+                        _groupMembers.value = emptyList()
+                        _isSyncPlayActive.value = false
+                    }
+                    "ForceKeepAlive" -> {
+                        Timber.d("💓 Received ForceKeepAlive ping from server")
+                        // No action needed - just acknowledges connection is alive
+                    }
                     "SyncPlayCommand" -> {
+                        Timber.i("📥 Received SyncPlayCommand from server")
                         if (data != null) {
                             handlePlaybackCommand(data)
+                        } else {
+                            Timber.w("⚠️ SyncPlayCommand has no data")
                         }
                     }
                     "PlayQueueUpdate" -> {
+                        Timber.i("📥 Received PlayQueueUpdate from server")
                         if (data != null) {
                             handlePlayQueueUpdate(data)
+                        } else {
+                            Timber.w("⚠️ PlayQueueUpdate has no data")
+                        }
+                    }
+                    "SyncPlayPlayQueueUpdate" -> {
+                        Timber.i("📥 Received SyncPlayPlayQueueUpdate from server")
+                        if (data != null) {
+                            // Data contains PlayQueueUpdate nested inside
+                            val playQueueData = data["PlayQueueUpdate"]?.jsonObject ?: data
+                            handlePlayQueueUpdate(playQueueData)
+                        } else {
+                            Timber.w("⚠️ SyncPlayPlayQueueUpdate has no data")
                         }
                     }
                     else -> Timber.d("Unhandled SyncPlay message type: %s", type)
@@ -1136,17 +1563,26 @@ class SyncPlayManager @Inject constructor(
     private fun handleGroupUpdate(data: JsonObject?) {
         if (data == null) return
 
+        Timber.i("🎵 handleGroupUpdate called with data keys: ${data.keys}")
+        
         // Check for nested PlayQueue update (common in group updates)
         // The server sends PlayQueue in data["Data"] with format:
         // {"Reason":"SetCurrentItem", "Playlist":[...], "PlayingItemIndex":0, ...}
         val nestedPlayQueueData = data["Data"]?.jsonObject
-        if (nestedPlayQueueData != null && nestedPlayQueueData["Playlist"] != null) {
-            Timber.i("🎵 Detected PlayQueue data in group update")
-            handlePlayQueueUpdate(nestedPlayQueueData)
-            // Continue to update group info below
+        if (nestedPlayQueueData != null) {
+            Timber.i("🎵 Found nested Data field, checking for Playlist...")
+            if (nestedPlayQueueData["Playlist"] != null) {
+                Timber.i("🎵 Detected PlayQueue data in group update - processing playlist!")
+                handlePlayQueueUpdate(nestedPlayQueueData)
+            } else {
+                Timber.i("🎵 Nested Data found but no Playlist field")
+            }
+        } else {
+            Timber.d("🎵 No nested Data field found")
         }
 
         val group = data["Group"]?.jsonObject ?: data
+        Timber.i("🎵 Applying group update - keys: ${group.keys}")
         applyGroupUpdate(group)
     }
 
@@ -1156,62 +1592,95 @@ class SyncPlayManager @Inject constructor(
         val positionTicks = data["PositionTicks"]?.jsonPrimitive?.content?.toLongOrNull()
         val positionMs = positionTicks?.let { it / 10000 } // Convert ticks to milliseconds
         val playbackRate = data["PlaybackRate"]?.jsonPrimitive?.content?.toFloatOrNull()
+        val whenValue = data["When"]?.jsonPrimitive?.content
+        val emittedAt = data["EmittedAt"]?.jsonPrimitive?.content
 
-        Timber.i("🎬 SyncPlay command: %s position=%s ms rate=%s", command, positionMs, playbackRate)
+        Timber.i("🎬 SyncPlay command: %s position=%s ms rate=%s when=%s emittedAt=%s", command, positionMs, playbackRate, whenValue, emittedAt)
 
         when (command) {
             "Pause" -> {
                 Timber.i("🎬🔴 PAUSE COMMAND RECEIVED: position=%s ms", positionMs)
                 positionMs?.let {
-                    _playbackCommands.value = SyncPlayCommand.Pause(it)
-                    Log.d("SyncPlayManager", "Received Pause command at $it ms")
+                    val cmd = SyncPlayCommand.Pause(it)
+                    if (!isDuplicateCommand(cmd)) {
+                        Timber.i("📥 Emitting Pause command to playbackCommands flow")
+                        _playbackCommands.value = cmd
+                        Log.d("SyncPlayManager", "Received Pause command at $it ms")
+                    } else {
+                        Timber.w("⚠️ Skipping duplicate Pause command")
+                    }
                 }
             }
             "Unpause", "Play" -> {
                 Timber.i("🎬🟢 UNPAUSE/PLAY COMMAND RECEIVED: position=%s ms", positionMs)
                 positionMs?.let {
-                    _playbackCommands.value = SyncPlayCommand.Unpause(it)
-                    Log.d("SyncPlayManager", "Received Unpause command at $it ms")
+                    val cmd = SyncPlayCommand.Unpause(it)
+                    if (!isDuplicateCommand(cmd)) {
+                        Timber.i("📥 Emitting Unpause command to playbackCommands flow")
+                        _playbackCommands.value = cmd
+                        Log.d("SyncPlayManager", "Received Unpause command at $it ms")
+                    } else {
+                        Timber.w("⚠️ Skipping duplicate Unpause command")
+                    }
                 }
             }
             "Seek" -> {
                 Timber.i("🎬⏩ SEEK COMMAND RECEIVED: position=%s ms", positionMs)
                 positionMs?.let {
-                    _playbackCommands.value = SyncPlayCommand.Seek(it)
-                    Log.d("SyncPlayManager", "Received Seek command to $it ms")
+                    val cmd = SyncPlayCommand.Seek(it)
+                    if (!isDuplicateCommand(cmd)) {
+                        Timber.i("📥 Emitting Seek command to playbackCommands flow")
+                        _playbackCommands.value = cmd
+                        Log.d("SyncPlayManager", "Received Seek command to $it ms")
+                    } else {
+                        Timber.w("⚠️ Skipping duplicate Seek command")
+                    }
                 }
             }
             "SetPlaybackRate" -> {
                 Timber.i("🎬⚡ PLAYBACK_RATE COMMAND RECEIVED: rate=%s", playbackRate)
                 playbackRate?.let {
+                    Timber.i("📥 Emitting SetPlaybackRate command to playbackCommands flow")
                     _playbackCommands.value = SyncPlayCommand.SetPlaybackRate(it)
                     Log.d("SyncPlayManager", "Received SetPlaybackRate command: $it")
                 }
             }
             "Stop" -> {
-                Timber.i("🎬⏹️ STOP COMMAND RECEIVED")
-                // Stop might not need special handling if other logic handles it
+                Timber.i("🎬⏹️ STOP COMMAND RECEIVED - exiting playback")
+                _playbackCommands.value = SyncPlayCommand.Stop()
+                Log.d("SyncPlayManager", "Received Stop command from server")
             }
-            else -> Timber.w("Unknown SyncPlay command: %s", command)
+            else -> Timber.w("❓ Unknown SyncPlay command: %s", command)
         }
     }
 
     private fun handlePlayQueueUpdate(data: JsonObject) {
         val reason = data["Reason"]?.jsonPrimitive?.content
-        Timber.i("🎵 PlayQueue update reason: %s", reason)
+        Timber.i("🎵 PlayQueue update reason: %s, full data keys: %s", reason, data.keys)
 
         when (reason) {
             "NewPlaylist", "SetCurrentItem" -> {
                 // Extract playlist items - server sends full playlist on SetCurrentItem
-                val playlist = data["Playlist"]?.jsonArray
+                val playlist = data["Playlist"]?.jsonArray ?: data["PlayingQueue"]?.jsonArray
                 Timber.i("🎵 Playlist extracted: %s items", playlist?.size ?: 0)
                 
-                val playingItemPosition = data["PlayingItemPosition"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
-                val startPositionTicks = data["StartPositionTicks"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
+                // Try multiple field names for compatibility
+                val playingItemPosition = data["PlayingItemPosition"]?.jsonPrimitive?.content?.toIntOrNull() 
+                    ?: data["PlayingItemIndex"]?.jsonPrimitive?.content?.toIntOrNull() 
+                    ?: data["playingItemIndex"]?.jsonPrimitive?.content?.toIntOrNull()
+                    ?: 0
+                val startPositionTicks = data["StartPositionTicks"]?.jsonPrimitive?.content?.toLongOrNull() 
+                    ?: data["startPositionTicks"]?.jsonPrimitive?.content?.toLongOrNull()
+                    ?: 0L
                 val startPositionMs = startPositionTicks / 10000L // Convert ticks to milliseconds
 
+                Timber.i("🎵 Extracted: playingItemPosition=%d, startPositionTicks=%d, startPositionMs=%d", 
+                    playingItemPosition, startPositionTicks, startPositionMs)
+
                 val itemIds = playlist?.mapNotNull { element ->
-                    val itemId = element.jsonObject["ItemId"]?.jsonPrimitive?.content
+                    val itemObj = element.jsonObject
+                    val itemId = itemObj["ItemId"]?.jsonPrimitive?.content
+                    Timber.d("🎵 Queue item: ItemId=%s", itemId)
                     itemId?.let { parseUUID(it) }
                 } ?: emptyList()
 
@@ -1222,6 +1691,7 @@ class SyncPlayManager @Inject constructor(
                     lastReceivedPlaylistPositionMs = startPositionMs
                     
                     Timber.i("🎬 PlayQueue reason=%s: %d items, start at index %d, position %d ms", reason, itemIds.size, playingItemPosition, startPositionMs)
+                    Timber.i("🎬 First item ID: %s", itemIds.firstOrNull())
                     _playbackCommands.value = SyncPlayCommand.Play(itemIds, startPositionMs, playingItemPosition)
                     Timber.i("🎬✅ Emitted SyncPlayCommand.Play with %d items starting at index %d", itemIds.size, playingItemPosition)
                 } else {
@@ -1244,8 +1714,19 @@ class SyncPlayManager @Inject constructor(
             membersJson
                 ?.jsonArray
                 ?.mapNotNull { element ->
-                    element.jsonObject["UserName"]?.jsonPrimitive?.content
+                    val userName = element.jsonObject["UserName"]?.jsonPrimitive?.content
                         ?: element.jsonObject["Name"]?.jsonPrimitive?.content
+                    
+                    // Track ping for network latency awareness
+                    element.jsonObject["Ping"]?.jsonPrimitive?.content?.toLongOrNull()?.let { ping ->
+                        if (lastPingMs != ping) {
+                            lastPingMs = ping
+                            _estimatedLatency.value = ping
+                            Timber.d("📡 Updated network latency: ${ping}ms (drift tolerance: ${getDriftTolerance()}ms)")
+                        }
+                    }
+                    
+                    userName
                 }
                 ?.distinct()
                 ?: emptyList()
