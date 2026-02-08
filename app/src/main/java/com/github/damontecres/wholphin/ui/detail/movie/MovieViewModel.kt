@@ -258,6 +258,40 @@ class MovieViewModel
             navigationManager.navigateTo(destination)
         }
 
+        /**
+         * Start playback with SyncPlay awareness
+         * If in a SyncPlay group, calls SetNewQueue to start group playback
+         * Otherwise, navigates directly to playback screen
+         */
+        fun startPlayback(itemId: UUID, positionMs: Long, syncPlayManager: com.github.damontecres.wholphin.services.SyncPlayManager?) {
+            // VERBOSE LOGGING - Debug entry point
+            timber.log.Timber.i("🎬🔴 STARTPLAYBACK() CALLED - itemId=%s, positionMs=%d", itemId, positionMs)
+            timber.log.Timber.i("🎬 syncPlayManager is %s", if (syncPlayManager != null) "NOT NULL" else "NULL")
+            
+            val isSyncPlayActive = syncPlayManager?.isSyncPlayActive?.value == true
+            val currentGroupId = syncPlayManager?.currentGroupId?.value
+            
+            timber.log.Timber.i("🎬 isSyncPlayActive=%s (manager=${syncPlayManager != null})", isSyncPlayActive)
+            timber.log.Timber.i("🎬 currentGroupId=%s", currentGroupId ?: "NULL")
+            
+            if (isSyncPlayActive && currentGroupId != null && syncPlayManager != null) {
+                // Start SyncPlay group playback
+                timber.log.Timber.i("🎬✅ TAKING SYNCPLAY PATH: Starting group playback for SyncPlay: itemId=%s, position=%d ms, groupId=%s", itemId, positionMs, currentGroupId)
+                syncPlayManager.play(
+                    itemIds = listOf(itemId),
+                    startPositionMs = positionMs,
+                    startIndex = 0
+                )
+                timber.log.Timber.i("🎬✅ syncPlayManager.play() completed - waiting for SyncPlayCommand.Play from server")
+                // Navigation will happen when SyncPlayCommand.Play received via WebSocket/polling
+            } else {
+                // Normal playback (not in SyncPlay)
+                timber.log.Timber.i("🎬⚠️ TAKING NORMAL PLAYBACK PATH (not in SyncPlay): isSyncPlayActive=%s, hasGroupId=%s, hasManager=%s", isSyncPlayActive, currentGroupId != null, syncPlayManager != null)
+                timber.log.Timber.i("▶️ Starting normal playback: itemId=%s, position=%d ms", itemId, positionMs)
+                navigateTo(Destination.Playback(itemId, positionMs))
+            }
+        }
+
         fun clearChosenStreams(chosenStreams: ChosenStreams?) {
             viewModelScope.launchIO {
                 itemPlaybackRepository.deleteChosenStreams(chosenStreams)

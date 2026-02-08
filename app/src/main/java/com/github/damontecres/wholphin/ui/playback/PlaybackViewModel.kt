@@ -289,6 +289,7 @@ class PlaybackViewModel
                 mediaSession =
                     MediaSession
                         .Builder(context, sessionPlayer)
+                        .setId("WholphinPlayback")
                         .build()
 
                 val item = BaseItem.from(base, api)
@@ -1291,4 +1292,9 @@ class PlaybackViewModel
                 }
             }
         }
+
+    override fun onCleared() {
+        super.onCleared()
+        release()
     }
+}

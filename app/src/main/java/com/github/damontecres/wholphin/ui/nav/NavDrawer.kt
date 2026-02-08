@@ -47,6 +47,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -436,7 +437,7 @@ fun NavDrawer(
                             if (preferences.appPreferences.interfacePreferences.syncplayPreferences.enableSyncplay) {
                                 IconNavItem(
                                     text = stringResource(R.string.syncplay_title),
-                                    icon = Icons.Default.Settings,
+                                    icon = ImageVector.vectorResource(R.drawable.ic_group_24),
                                     selected = false,
                                     drawerOpen = drawerState.isOpen,
                                     interactionSource = interactionSource,

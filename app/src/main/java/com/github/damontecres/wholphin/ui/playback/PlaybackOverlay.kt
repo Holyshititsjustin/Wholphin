@@ -98,6 +98,7 @@ fun PlaybackOverlay(
     onPlaybackActionClick: (PlaybackAction) -> Unit,
     onClickPlaybackDialogType: (PlaybackDialogType) -> Unit,
     onSeekBarChange: (Long) -> Unit,
+    onExit: () -> Unit,
     showDebugInfo: Boolean,
     currentPlayback: CurrentPlayback?,
     currentSegment: MediaSegmentDto?,
@@ -212,6 +213,7 @@ fun PlaybackOverlay(
                     currentSegment = currentSegment,
                     modifier =
                     Modifier,
+                    onExit = onExit,
                     syncPlayManager = syncPlayManager,
                     // Don't use key events because this control has vertical items so up/down is tough to manage
                 )
@@ -521,6 +523,7 @@ fun Controller(
     onPlaybackActionClick: (PlaybackAction) -> Unit,
     onClickPlaybackDialogType: (PlaybackDialogType) -> Unit,
     onSeekProgress: (Long) -> Unit,
+    onExit: () -> Unit,
     nextState: OverlayViewState?,
     currentSegment: MediaSegmentDto?,
     modifier: Modifier = Modifier,
@@ -603,6 +606,7 @@ fun Controller(
             skipBackOnResume = skipBackOnResume,
             currentSegment = currentSegment,
             onClickPlaybackDialogType = onClickPlaybackDialogType,
+            onExit = onExit,
             moreFocusRequester = moreFocusRequester,
             captionFocusRequester = captionFocusRequester,
             settingsFocusRequester = settingsFocusRequester,

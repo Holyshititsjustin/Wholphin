@@ -68,6 +68,7 @@ import com.github.damontecres.wholphin.preferences.UserPreferences
 import com.github.damontecres.wholphin.services.BackdropService
 import com.github.damontecres.wholphin.services.FavoriteWatchManager
 import com.github.damontecres.wholphin.services.NavigationManager
+import com.github.damontecres.wholphin.services.SyncPlayManager
 import com.github.damontecres.wholphin.ui.AspectRatios
 import com.github.damontecres.wholphin.ui.RequestOrRestoreFocus
 import com.github.damontecres.wholphin.ui.SlimItemFields
@@ -241,6 +242,10 @@ class CollectionFolderViewModel
             Timber.v("onFilterChange: filter=%s", newFilter)
             saveLibraryDisplayInfo(newFilter, sortAndDirection.value!!)
             loadResults(false, sortAndDirection.value!!, recursive, newFilter, useSeriesForPrimary)
+        }
+
+        fun startPlayback(itemId: UUID, positionMs: Long, syncPlayManager: SyncPlayManager?) {
+            navigationManager.startPlayback(itemId, positionMs, syncPlayManager)
         }
 
         fun onSortChange(
@@ -593,6 +598,7 @@ fun CollectionFolderGrid(
         },
 ) {
     val context = LocalContext.current
+    val syncPlayManager = (context as? com.github.damontecres.wholphin.MainActivity)?.syncPlayManager
     val sortAndDirection by viewModel.sortAndDirection.observeAsState(SortAndDirection.DEFAULT)
     val filter by viewModel.filter.observeAsState(initialFilter.filter)
     val loading by viewModel.loading.observeAsState(LoadingState.Loading)
@@ -603,6 +609,12 @@ fun CollectionFolderGrid(
     var moreDialog by remember { mutableStateOf<Optional<PositionItem>>(Optional.absent()) }
     var showPlaylistDialog by remember { mutableStateOf<Optional<UUID>>(Optional.absent()) }
     val playlistState by playlistViewModel.playlistState.observeAsState(PlaylistLoadingState.Pending)
+
+    val onClickSyncPlay = remember<() -> Unit> {
+        {
+            viewModel.navigationManager.navigateTo(Destination.SyncPlay)
+        }
+    }
 
     when (val state = loading) {
         DataLoadingState.Loading,
@@ -657,7 +669,11 @@ fun CollectionFolderGrid(
                     onChangeBackdrop = viewModel::updateBackdrop,
                     playEnabled = playEnabled,
                     onClickPlay = { _, item ->
-                        viewModel.navigationManager.navigateTo(Destination.Playback(item))
+                        viewModel.startPlayback(
+                            itemId = item.id,
+                            positionMs = item.resumeMs,
+                            syncPlayManager = syncPlayManager
+                        )
                     },
                     onClickPlayAll = { shuffle ->
                         itemId.toUUIDOrNull()?.let {
@@ -673,6 +689,7 @@ fun CollectionFolderGrid(
                             )
                         }
                     },
+                    onClickSyncPlay = onClickSyncPlay,
                 )
 
                 AnimatedVisibility(
@@ -773,6 +790,7 @@ fun CollectionFolderGridContent(
     filterOptions: List<ItemFilterBy<*>> = listOf(),
     onFilterChange: (GetItemsFilter) -> Unit = {},
     focusRequesterOnEmpty: FocusRequester? = null,
+    onClickSyncPlay: () -> Unit = {},
 ) {
     val context = LocalContext.current
 
@@ -883,6 +901,13 @@ fun CollectionFolderGridContent(
                                     title = R.string.shuffle,
                                     iconStringRes = R.string.fa_shuffle,
                                     onClick = { onClickPlayAll.invoke(true) },
+                                )
+                                // Add SyncPlay button
+                                ExpandableFaButton(
+                                    title = R.string.syncplay_title,
+                                    iconStringRes = R.string.fa_user,
+                                    onClick = onClickSyncPlay,
+                                    modifier = Modifier,
                                 )
                             }
                         }

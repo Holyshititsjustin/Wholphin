@@ -25,6 +25,35 @@ class NavigationManager
         }
 
         /**
+         * Start playback with SyncPlay awareness
+         * If in a SyncPlay group, calls SetNewQueue to start group playback
+         * Otherwise, navigates directly to playback screen
+         */
+        fun startPlayback(
+            itemId: java.util.UUID,
+            positionMs: Long,
+            syncPlayManager: SyncPlayManager?,
+        ) {
+            val isSyncPlayActive = syncPlayManager?.isSyncPlayActive?.value == true
+            val currentGroupId = syncPlayManager?.currentGroupId?.value
+
+            if (isSyncPlayActive && currentGroupId != null && syncPlayManager != null) {
+                // Start SyncPlay group playback
+                Timber.i("🎬 Starting group playback for SyncPlay: itemId=%s, position=%d ms", itemId, positionMs)
+                syncPlayManager.play(
+                    itemIds = listOf(itemId),
+                    startPositionMs = positionMs,
+                    startIndex = 0,
+                )
+                // Navigation will happen when SyncPlayCommand.Play received via WebSocket/polling
+            } else {
+                // Normal playback (not in SyncPlay)
+                Timber.i("▶️ Starting normal playback: itemId=%s, position=%d ms", itemId, positionMs)
+                navigateTo(Destination.Playback(itemId, positionMs))
+            }
+        }
+
+        /**
          * Go to the specified [Destination], but reset the back stack to Home first
          */
         fun navigateToFromDrawer(destination: Destination) {

@@ -123,6 +123,8 @@ class AppPreferencesSerializer
                                             autoJoinLastGroup = AppPreference.AutoJoinLastGroup.defaultValue
                                             lastGroupId = ""
                                             showSyncIndicator = AppPreference.ShowSyncIndicator.defaultValue
+                                            notifyUserJoins = AppPreference.SyncPlayUserJoinNotifications.defaultValue
+                                            notifySyncplayEnabled = AppPreference.SyncPlayEnabledNotifications.defaultValue
                                             syncThresholdMs = AppPreference.SyncPlayThreshold.defaultValue.toInt()
                                         }.build()
                             }.build()

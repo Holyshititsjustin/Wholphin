@@ -49,6 +49,8 @@ fun SyncPlayDialog(
     val availableGroups by syncPlayManager.availableGroups.collectAsState()
     val notifyUserJoins =
         preferences?.appPreferences?.interfacePreferences?.syncplayPreferences?.notifyUserJoins == true
+    val notifySyncPlayEnabled =
+        preferences?.appPreferences?.interfacePreferences?.syncplayPreferences?.notifySyncplayEnabled == true
 
     // Refresh groups when dialog opens to discover existing groups
     LaunchedEffect(Unit) {
@@ -59,22 +61,23 @@ fun SyncPlayDialog(
     val syncPlayMessage by syncPlayManager.syncPlayMessages.collectAsState()
     LaunchedEffect(syncPlayMessage) {
         when (syncPlayMessage) {
+            is SyncPlayMessage.GroupJoined -> {
+                // Group joined toast now handled globally
+            }
             is SyncPlayMessage.UserJoined -> {
-                if (notifyUserJoins) {
-                    val userName = (syncPlayMessage as SyncPlayMessage.UserJoined).userName
-                    coroutineScope.launch {
-                        showToast(context, "👋 $userName joined SyncPlay")
-                    }
-                }
+                // User joined toast now handled globally
+            }
+            is SyncPlayMessage.UserLeft -> {
+                // User left toast now handled globally
+            }
+            is SyncPlayMessage.GroupLeft -> {
+                // Group left toast now handled globally
             }
             is SyncPlayMessage.CommandSent -> {
-                val command = (syncPlayMessage as SyncPlayMessage.CommandSent).command
-                coroutineScope.launch {
-                    showToast(context, "📤 $command")
-                }
+                // Command sent toast now handled globally
             }
             else -> {
-                // Ignore other message types
+                // Other messages handled globally
             }
         }
     }

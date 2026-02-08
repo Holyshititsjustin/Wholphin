@@ -140,6 +140,9 @@ fun MovieDetails(
 
         LoadingState.Success -> {
             item?.let { movie ->
+                // Capture SyncPlayManager before lambda
+                val syncPlayManager = (context as? com.github.damontecres.wholphin.MainActivity)?.syncPlayManager
+                
                 LifecycleResumeEffect(destination.itemId) {
                     viewModel.maybePlayThemeSong(
                         destination.itemId,
@@ -170,11 +173,10 @@ fun MovieDetails(
                         )
                     },
                     playOnClick = {
-                        viewModel.navigateTo(
-                            Destination.Playback(
-                                movie.id,
-                                it.inWholeMilliseconds,
-                            ),
+                        viewModel.startPlayback(
+                            itemId = movie.id,
+                            positionMs = it.inWholeMilliseconds,
+                            syncPlayManager = syncPlayManager
                         )
                     },
                     overviewOnClick = {

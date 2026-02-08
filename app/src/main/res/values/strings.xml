@@ -571,6 +571,8 @@
     <string name="syncplay_auto_join">Auto-join last group</string>
     <string name="syncplay_show_indicator">Show sync indicator during playback</string>
     <string name="syncplay_sync_threshold">Sync threshold</string>
+    <string name="syncplay_user_join_notifications">Notify when users join</string>
+    <string name="syncplay_enabled_notifications">Notify when SyncPlay is enabled</string>
     <string name="syncplay_test_dialog">Open SyncPlay Dialog</string>
     <string name="close">Close</string>
 

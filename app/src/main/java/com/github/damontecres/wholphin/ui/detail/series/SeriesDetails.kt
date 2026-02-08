@@ -101,6 +101,7 @@ fun SeriesDetails(
     playlistViewModel: AddPlaylistViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
+    val syncPlayManager = (context as? com.github.damontecres.wholphin.MainActivity)?.syncPlayManager
     val loading by viewModel.loading.observeAsState(LoadingState.Loading)
 
     val item by viewModel.item.observeAsState()
@@ -135,6 +136,14 @@ fun SeriesDetails(
 
                     onPauseOrDispose {
                         viewModel.release()
+                    }
+                }
+
+                val onClickSyncPlay: () -> Unit = remember {
+                    {
+                        syncPlayManager?.let {
+                            viewModel.navigationManager.navigateTo(Destination.SyncPlay)
+                        }
                     }
                 }
 
@@ -190,16 +199,12 @@ fun SeriesDetails(
                             )
                     },
                     playOnClick = { shuffle ->
-                        if (shuffle) {
-                            viewModel.navigateTo(
-                                Destination.PlaybackList(
-                                    itemId = item.id,
-                                    shuffle = true,
-                                ),
-                            )
-                        } else {
-                            viewModel.playNextUp()
-                        }
+                        viewModel.navigateTo(
+                            Destination.PlaybackList(
+                                itemId = item.id,
+                                shuffle = shuffle,
+                            ),
+                        )
                     },
                     watchOnClick = { showWatchConfirmation = true },
                     favoriteOnClick = {
@@ -230,6 +235,7 @@ fun SeriesDetails(
                                 showPlaylistDialog.makePresent(itemId)
                             },
                         ),
+                    onClickSyncPlay = onClickSyncPlay,
                 )
                 if (showWatchConfirmation) {
                     ConfirmDialog(
@@ -314,6 +320,7 @@ fun SeriesDetailsContent(
     onClickExtra: (Int, ExtrasItem) -> Unit,
     moreActions: MoreDialogActions,
     onClickDiscover: (Int, DiscoverItem) -> Unit,
+    onClickSyncPlay: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -425,6 +432,19 @@ fun SeriesDetailsContent(
                         TrailerButton(
                             trailers = trailers,
                             trailerOnClick = trailerOnClick,
+                            modifier =
+                                Modifier.onFocusChanged {
+                                    if (it.isFocused) {
+                                        scope.launch(ExceptionHandler()) {
+                                            bringIntoViewRequester.bringIntoView()
+                                        }
+                                    }
+                                },
+                        )
+                        ExpandableFaButton(
+                            title = R.string.syncplay_title,
+                            iconStringRes = R.string.fa_user,
+                            onClick = onClickSyncPlay,
                             modifier =
                                 Modifier.onFocusChanged {
                                     if (it.isFocused) {

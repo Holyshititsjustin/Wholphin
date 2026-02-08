@@ -5,6 +5,7 @@ import com.github.damontecres.wholphin.services.hilt.AuthOkHttpClient
 import com.github.damontecres.wholphin.services.hilt.IoCoroutineScope
 import dagger.hilt.android.scopes.ActivityScoped
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -12,8 +13,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -38,6 +41,8 @@ import javax.inject.Inject
 import android.util.Log
 
 sealed class SyncPlayMessage {
+    data class SyncPlayEnabled(val serverName: String? = null) : SyncPlayMessage()
+    data class SyncPlayDisabled(val reason: String = "SyncPlay disabled") : SyncPlayMessage()
     data class GroupJoined(val groupId: UUID, val members: List<String>) : SyncPlayMessage()
     data class StateUpdate(val positionMs: Long, val isPlaying: Boolean) : SyncPlayMessage()
     data class UserJoined(val userName: String) : SyncPlayMessage()
@@ -84,6 +89,12 @@ class SyncPlayManager @Inject constructor(
     private val _isGroupPlaying = MutableStateFlow(false)
     val isGroupPlaying: StateFlow<Boolean> = _isGroupPlaying.asStateFlow()
 
+    // Track the actual group state for strict Ready coordination
+    // Possible values: "Idle", "Waiting", "Paused", "Playing"
+    // "Waiting" = buffering, waiting for all clients to report Ready
+    private val _groupState = MutableStateFlow<String?>(null)
+    val groupState: StateFlow<String?> = _groupState.asStateFlow()
+
     // Position reporting for synced playback
     private val _reportingPlaybackPosition = MutableStateFlow(false)
     val reportingPlaybackPosition: StateFlow<Boolean> = _reportingPlaybackPosition.asStateFlow()
@@ -107,6 +118,8 @@ class SyncPlayManager @Inject constructor(
     private var refreshGroupsJob: Job? = null
     private var sessionsPollingJob: Job? = null
     private var disablePolling = false
+    private var syncPlayEnabledNotified = false
+    private var lastNotifiedGroupId: UUID? = null
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -167,7 +180,11 @@ class SyncPlayManager @Inject constructor(
                     // Use /SyncPlay/Ready instead of /BufferingDone
                     val url = "$baseUrl/SyncPlay/Ready?api_key=$accessToken"
                     val whenIso = Instant.ofEpochMilli(System.currentTimeMillis()).toString()
-                    val playlistItemIdString = formatSyncPlayId(itemId)
+                    val playlistItemIdString = resolvePlaylistItemId(itemId)
+                    if (playlistItemIdString == null) {
+                        Timber.w("❌ Cannot report Ready: missing PlaylistItemId mapping for itemId=%s", itemId)
+                        return@launch
+                    }
                     // Server expects requestData wrapper
                     val requestBodyJson = """
                         {
@@ -215,25 +232,6 @@ class SyncPlayManager @Inject constructor(
         lastRemoteItemId = itemId
     }
 
-    init {
-        Timber.i("🔄 SyncPlayManager initialized - will keep WebSocket open for group discovery")
-        // Keep WebSocket open to receive group notifications from server
-        coroutineScope.launch {
-            while (true) {
-                val hasServer = serverRepository.current.value?.server != null && 
-                                 serverRepository.current.value?.user != null
-                Timber.d("🔗 WebSocket check: hasServer=%s, webSocket=%s, connected=%s", hasServer, if (webSocket == null) "null" else "exists", webSocketConnected)
-                if (hasServer && (webSocket == null || !webSocketConnected)) {
-                    Timber.i("🔗 Server connected but WebSocket not ready - opening WebSocket for SyncPlay notifications")
-                    startListening()
-                } else if (!hasServer) {
-                    Timber.d("🔗 No server connected yet, waiting...")
-                }
-                kotlinx.coroutines.delay(3000) // Check every 3 seconds
-            }
-        }
-    }
-
     private fun currentBaseUrl(): String? = serverRepository.current.value?.server?.url?.trimEnd('/')
 
     private fun buildUrl(path: String): String? = currentBaseUrl()?.let { "$it$path" }
@@ -259,6 +257,10 @@ class SyncPlayManager @Inject constructor(
     }
 
     private fun formatSyncPlayId(id: UUID): String = id.toString().replace("-", "")
+
+    private fun resolvePlaylistItemId(itemId: UUID): String? {
+        return playlistItemIdByItemId[itemId]
+    }
 
     private fun org.jellyfin.sdk.model.UUID.toJavaUuid(): UUID = UUID.fromString(toString())
 
@@ -338,7 +340,10 @@ class SyncPlayManager @Inject constructor(
         positionReportingJob = coroutineScope.launch {
             while (isActive && isSyncPlayActive.value && currentGroupId.value != null) {
                 try {
-                    val position = getPosition()
+                    // FIX: Ensure player access happens on main thread
+                    val position = withContext(Dispatchers.Main.immediate) {
+                        getPosition()
+                    }
                     val groupId = currentGroupId.value ?: return@launch
                     
                     // Optimization: Skip reporting if position hasn't changed significantly
@@ -356,7 +361,12 @@ class SyncPlayManager @Inject constructor(
                     val playlistItemId = lastRemoteItemId
                     if (accessToken != null && baseUrl != null && playlistItemId != null) {
                         val url = "$baseUrl/SyncPlay/Ready?api_key=$accessToken"
-                        val playlistItemIdString = formatSyncPlayId(playlistItemId)
+                        val playlistItemIdString = resolvePlaylistItemId(playlistItemId)
+                        if (playlistItemIdString == null) {
+                            Timber.w("❌ Cannot report position: missing PlaylistItemId mapping for itemId=%s", playlistItemId)
+                            delay(1000)
+                            continue
+                        }
                         val whenIso = Instant.ofEpochMilli(System.currentTimeMillis()).toString()
                         // Server expects requestData wrapper
                         val requestBodyJson = """
@@ -455,6 +465,11 @@ class SyncPlayManager @Inject constructor(
                 okHttpClient.newCall(request).execute().use { response ->
                     if (response.isSuccessful) {
                         Timber.i("✅ Posted SyncPlay capabilities to server (SyncPlayManager)")
+                        if (!syncPlayEnabledNotified) {
+                            val serverName = serverRepository.current.value?.server?.name
+                            _syncPlayMessages.value = SyncPlayMessage.SyncPlayEnabled(serverName)
+                            syncPlayEnabledNotified = true
+                        }
                     } else {
                         Timber.w(
                             "❌ Failed to post SyncPlay capabilities (SyncPlayManager): HTTP %d - %s",
@@ -480,6 +495,9 @@ class SyncPlayManager @Inject constructor(
         sessionsPollingJob?.cancel()
         _isSyncPlayActive.value = false
         _currentGroupId.value = null
+        lastNotifiedGroupId = null
+        syncPlayEnabledNotified = false
+        _syncPlayMessages.value = SyncPlayMessage.SyncPlayDisabled()
     }
 
     /**
@@ -538,6 +556,16 @@ class SyncPlayManager @Inject constructor(
                 val groupId = _currentGroupId.value
                 Timber.i("🎬 Inside coroutine: groupId=$groupId")
                 if (groupId != null) {
+                    // CRITICAL FIX: ALWAYS close and reconnect WebSocket before sending commands
+                    // This ensures we don't miss server broadcasts if previous connection became stale
+                    Timber.i("🎬 Forcing WebSocket reconnect to ensure fresh connection before play command...")
+                    if (webSocket != null) {
+                        webSocket?.close(1000, "reconnect for play")
+                        webSocket = null
+                    }
+                    startListening()
+                    delay(500) // Give WebSocket time to connect
+                    
                     // Send play command via /SyncPlay/SetNewQueue endpoint
                     val positionTicks = startPositionMs * 10000L // Convert ms to ticks
                     val accessToken = serverRepository.current.value?.user?.accessToken
@@ -600,6 +628,7 @@ class SyncPlayManager @Inject constructor(
                 _currentGroupId.value = groupId
                 _isSyncPlayActive.value = true
                 _syncPlayMessages.value = SyncPlayMessage.GroupJoined(groupId, emptyList())
+                lastNotifiedGroupId = groupId
                 Timber.i("✅ Joined group via Jellyfin API: $groupId")
                 
                 // Step 2: Ensure WebSocket is connected
@@ -691,6 +720,7 @@ class SyncPlayManager @Inject constructor(
                 _currentGroupId.value = newGroupId
                 _isSyncPlayActive.value = true
                 _syncPlayMessages.value = SyncPlayMessage.GroupJoined(newGroupId, emptyList())
+                lastNotifiedGroupId = newGroupId
                 Timber.d("Joined newly created group: $newGroupId")
                 startListening()
                 startSessionsPolling()
@@ -708,10 +738,12 @@ class SyncPlayManager @Inject constructor(
                 if (groupId != null) {
                     leaveGroupRemote()
                     Timber.d("Leaving SyncPlay group: $groupId")
+                    _syncPlayMessages.value = SyncPlayMessage.GroupLeft("Left group")
                 }
                 _currentGroupId.value = null
                 _isSyncPlayActive.value = false
                 _groupMembers.value = emptyList()
+                lastNotifiedGroupId = null
                 subscriptionJob?.cancel()
                 sessionsPollingJob?.cancel()
                 lastRemoteItemId = null
@@ -979,7 +1011,11 @@ class SyncPlayManager @Inject constructor(
                 val baseUrl = currentBaseUrl()
                 if (accessToken != null && baseUrl != null) {
                     val url = "$baseUrl/SyncPlay/Ready?api_key=$accessToken"
-                    val playlistItemIdString = formatSyncPlayId(itemId)
+                    val playlistItemIdString = resolvePlaylistItemId(itemId)
+                    if (playlistItemIdString == null) {
+                        Timber.w("❌ Cannot send Ready after play: missing PlaylistItemId mapping for itemId=%s", itemId)
+                        return@launch
+                    }
                     val whenIso = Instant.ofEpochMilli(System.currentTimeMillis()).toString()
                     // Server expects requestData wrapper
                     val requestBodyJson = """
@@ -1015,21 +1051,19 @@ class SyncPlayManager @Inject constructor(
     }
 
     private fun startListening() {
-        Timber.i("startListening: Called - initializing WebSocket connection")
-        if (webSocket != null && webSocketConnected) {
-            val now = System.currentTimeMillis()
-            val idleMs = now - lastWebSocketEventTime
-            if (idleMs < 15000L) {
-                Timber.i("startListening: WebSocket already connected (idle %dms), skipping reconnect", idleMs)
-                return
-            }
-            Timber.w("startListening: WebSocket connected but idle %dms, forcing reconnect", idleMs)
-        }
+        Timber.i("startListening: Called - closing existing WebSocket and creating fresh connection")
+        
+        // Always close existing WebSocket to ensure session matches current API context
         if (webSocket != null) {
-            Timber.i("startListening: Closing stale WebSocket before reconnect")
-            webSocket?.close(1000, "reconnecting")
+            Timber.i("startListening: Closing existing WebSocket")
+            try {
+                webSocket?.close(1000, "creating fresh connection")
+            } catch (e: Exception) {
+                Timber.w(e, "startListening: Error closing WebSocket")
+            }
+            webSocket = null
         }
-        webSocketConnected = false  // Mark as disconnected when closing
+        webSocketConnected = false
         
         val accessToken = serverRepository.current.value?.user?.accessToken
         if (accessToken == null) {
@@ -1050,68 +1084,103 @@ class SyncPlayManager @Inject constructor(
         Timber.i("startListening: Building WebSocket request for URL: $wsUrl")
         val request = Request.Builder().url(wsUrl).build()
         Timber.i("startListening: Calling okHttpClient.newWebSocket()...")
+        val connectionStartTime = System.currentTimeMillis()
         webSocket =
             okHttpClient.newWebSocket(
                 request,
                 object : WebSocketListener() {
                     override fun onOpen(webSocket: WebSocket, response: Response) {
-                        webSocketConnected = true  // Mark as connected
+                        val connectionTime = System.currentTimeMillis() - connectionStartTime
+                        webSocketConnected = true
                         lastWebSocketEventTime = System.currentTimeMillis()
-                        Timber.i("WebSocket_onOpen: Connection opened successfully!")
-                        
-                        // Note: No explicit subscription messages needed - Jellyfin broadcasts automatically
-                        // when client is in a SyncPlay group. Server will send SyncPlayGroupUpdate and SyncPlayCommand messages.
-                        Timber.i("WebSocket_onOpen: WebSocket is open and ready. Waiting for SyncPlay messages from server...")
+                        Timber.i("🔗 WebSocket CONNECTED in ${connectionTime}ms! Response: ${response.code} ${response.message}")
+                        Timber.i("🔗 WebSocket ready to receive SyncPlay messages from server")
+                        Timber.i("🔗 WebSocket URL: $wsUrl")
+                        Timber.i("🔗 WebSocket headers: ${response.headers}")
+                        // _syncPlayMessages.value = SyncPlayMessage.Info("Connected to server") // Removed - no Info class
                     }
 
                     override fun onMessage(webSocket: WebSocket, text: String) {
                         lastWebSocketEventTime = System.currentTimeMillis()
-                        Timber.i("WebSocket_onMessage_Text: Received message: %s", text)
+                        Timber.i("📨 WebSocket MESSAGE RECEIVED (${text.length} chars): $text")
+
+                        // Parse and log message type for debugging
+                        try {
+                            val jsonMessage = Json.parseToJsonElement(text).jsonObject
+                            val messageType = jsonMessage["MessageType"]?.jsonPrimitive?.content
+                            val data = jsonMessage["Data"]?.jsonObject
+                            Timber.i("📨 MessageType: $messageType, Data keys: ${data?.keys?.joinToString()}")
+                        } catch (e: Exception) {
+                            Timber.w("📨 Could not parse WebSocket message as JSON: ${e.message}")
+                        }
+
                         handleSocketMessage(text)
                     }
 
                     override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
                         val textMessage = bytes.utf8()
                         lastWebSocketEventTime = System.currentTimeMillis()
-                        Timber.i("WebSocket_onMessage_Bytes: Received message: %s", textMessage)
+                        Timber.i("📨 WebSocket BYTES MESSAGE RECEIVED (${bytes.size} bytes, ${textMessage.length} chars): $textMessage")
                         handleSocketMessage(textMessage)
                     }
 
                     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                        webSocketConnected = false  // Mark as disconnected
-                        lastWebSocketEventTime = System.currentTimeMillis()
-                        Timber.e(t, "WebSocket_onFailure: Connection failed - will attempt reconnect")
-                        _syncPlayMessages.value = SyncPlayMessage.Error("Connection lost")
+                        val failureTime = System.currentTimeMillis()
+                        webSocketConnected = false
+                        lastWebSocketEventTime = failureTime
+                        Timber.e(t, "❌ WebSocket FAILURE at ${failureTime}: ${t.message}")
+                        Timber.e("❌ WebSocket failure response: ${response?.code} ${response?.message}")
+                        Timber.e("❌ WebSocket failure headers: ${response?.headers}")
+                        Timber.e("❌ WebSocket will attempt automatic reconnect")
+                        _syncPlayMessages.value = SyncPlayMessage.Error("Connection failed: ${t.message}")
                         refreshGroupsJob?.cancel()
-                        // Set webSocket to null so init loop will reconnect
                         this@SyncPlayManager.webSocket = null
+
+                        // Log connection state for debugging
+                        Timber.i("❌ WebSocket state after failure: connected=$webSocketConnected, webSocket=null")
                     }
 
                     override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                        webSocketConnected = false  // Mark as disconnected
-                        lastWebSocketEventTime = System.currentTimeMillis()
-                        Timber.w("WebSocket_onClosed: Closed with code=%d reason=%s - will attempt reconnect", code, reason)
-                        // Set webSocket to null so init loop will reconnect
+                        val closeTime = System.currentTimeMillis()
+                        webSocketConnected = false
+                        lastWebSocketEventTime = closeTime
+                        Timber.w("🔌 WebSocket CLOSED at ${closeTime}: code=$code, reason='$reason'")
+                        Timber.w("🔌 WebSocket close was ${if (code == 1000) "normal" else "abnormal"}")
+                        Timber.w("🔌 WebSocket will attempt automatic reconnect")
                         this@SyncPlayManager.webSocket = null
+
+                        // Log connection state for debugging
+                        Timber.i("🔌 WebSocket state after close: connected=$webSocketConnected, webSocket=null")
                     }
-                    
+
                     override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                         lastWebSocketEventTime = System.currentTimeMillis()
-                        Timber.w("WebSocket_onClosing: Closing with code=%d reason=%s", code, reason)
+                        Timber.w("🔌 WebSocket CLOSING: code=$code, reason='$reason'")
+                        Timber.w("🔌 Acknowledging close with normal closure")
                         webSocket.close(1000, null)  // Acknowledge close
                     }
                 },
             )
-        Timber.i("startListening: WebSocket connection request queued")
+        Timber.i("startListening: WebSocket connection request queued at ${System.currentTimeMillis()}")
     }
 
     private fun sendWebSocketMessage(message: String) {
         coroutineScope.launch {
+            val sendTime = System.currentTimeMillis()
+            Timber.i("📤 Attempting to send WebSocket message at ${sendTime}")
+            Timber.i("📤 WebSocket connected: $webSocketConnected, webSocket instance: ${webSocket != null}")
+
             if (webSocket != null && webSocketConnected) {
-                webSocket?.send(message)
-                Timber.i("📤 Sent WebSocket message: %s", message.take(200))
+                val success = webSocket?.send(message) ?: false
+                val sendDuration = System.currentTimeMillis() - sendTime
+                if (success) {
+                    Timber.i("📤✅ WebSocket message sent successfully in ${sendDuration}ms: ${message.take(200)}")
+                } else {
+                    Timber.e("📤❌ WebSocket send failed after ${sendDuration}ms: ${message.take(200)}")
+                }
             } else {
-                Timber.w("📤 Cannot send WebSocket message - WebSocket not connected")
+                Timber.w("📤❌ Cannot send WebSocket message - connected=$webSocketConnected, instance=${webSocket != null}")
+                Timber.w("📤❌ Message content: ${message.take(200)}")
             }
         }
     }
@@ -1129,6 +1198,13 @@ class SyncPlayManager @Inject constructor(
                     val syncActive = _isSyncPlayActive.value
                     val groupId = _currentGroupId.value
                     Timber.d("🔄 Polling iteration #%d - isActive=%s, isSyncPlayActive=%s, groupId=%s", iteration, isActive, syncActive, groupId)
+                    
+                    // HEALTH CHECK: Ensure WebSocket is connected and listening
+                    // If WebSocket is disconnected, reconnect to ensure we receive server broadcasts
+                    if (!webSocketConnected && syncActive) {
+                        Timber.i("🔄📡 WebSocket disconnected during polling - reconnecting to ensure we receive server broadcasts")
+                        startListening()
+                    }
                     
                     if (!syncActive) {
                         Timber.i("🔄⏹️ isSyncPlayActive is false, exiting polling loop")
@@ -1195,11 +1271,18 @@ class SyncPlayManager @Inject constructor(
 
     // Track last observed group state to detect changes
     private var lastGroupState: String? = null
+
+    // Throttle Ready re-requests when group is waiting but playlist hasn't arrived
+    private var lastReadyRequestTime = 0L
+    private val READY_REQUEST_COOLDOWN_MS = 10_000L
     
     // Track last playlist received from WebSocket so we don't query REST for empty playlists
     private var lastReceivedPlaylist: List<UUID> = emptyList()
     private var lastReceivedPlaylistIndex: Int = 0
     private var lastReceivedPlaylistPositionMs: Long = 0L
+
+    // Map ItemId -> PlaylistItemId for accurate Ready reporting
+    private val playlistItemIdByItemId: MutableMap<UUID, String> = mutableMapOf()
     
     // Track if we've already emitted a Play command for current playlist to prevent restart loops
     private var lastPlaylistEmittedHash: Int = 0
@@ -1212,13 +1295,43 @@ class SyncPlayManager @Inject constructor(
             if (currentState != null && currentState != lastGroupState) {
                 Timber.i("📡 Group state changed from %s to %s", lastGroupState, currentState)
                 lastGroupState = currentState
+                _groupState.value = currentState
 
                 // Only update local state from group status; actual pause/unpause
                 // should come from SyncPlayCommand messages to avoid false pauses.
                 when (currentState) {
-                    "Playing" -> _isGroupPlaying.value = true
-                    "Paused", "Waiting" -> _isGroupPlaying.value = false
+                    "Playing" -> {
+                        _isGroupPlaying.value = true
+                        Timber.i("✅ Group transitioned to Playing - all clients are ready")
+                    }
+                    "Waiting" -> {
+                        _isGroupPlaying.value = false
+                        Timber.i("⏳ Group in Waiting state - buffering, waiting for all clients to report Ready")
+                    }
+                    "Paused" -> {
+                        _isGroupPlaying.value = false
+                        Timber.i("⏸️ Group in Paused state")
+                    }
+                    "Idle" -> {
+                        _isGroupPlaying.value = false
+                        Timber.i("🔵 Group in Idle state")
+                    }
                     else -> Timber.d("📡 Unknown group state: %s", currentState)
+                }
+            }
+
+            // If group is waiting and we haven't received a playlist yet, ensure WS is connected
+            // and re-request Ready to prompt the server to send the current PlayQueue.
+            if (currentState == "Waiting" && lastReceivedPlaylist.isEmpty()) {
+                if (!webSocketConnected) {
+                    Timber.i("🔌 WebSocket not connected while group is Waiting - reconnecting")
+                    startListening()
+                }
+                val now = System.currentTimeMillis()
+                if (now - lastReadyRequestTime > READY_REQUEST_COOLDOWN_MS) {
+                    Timber.i("📤 Re-requesting Ready while Waiting (no playlist yet)")
+                    lastReadyRequestTime = now
+                    sendReadyAfterJoin(group.groupId.toJavaUuid())
                 }
             }
 
@@ -1521,8 +1634,11 @@ class SyncPlayManager @Inject constructor(
                     "SyncPlayPlayQueueUpdate" -> {
                         Timber.i("📥 Received SyncPlayPlayQueueUpdate from server")
                         if (data != null) {
-                            // Data contains PlayQueueUpdate nested inside
-                            val playQueueData = data["PlayQueueUpdate"]?.jsonObject ?: data
+                            // Data contains GroupId/Type/Data wrapper (PlayQueueUpdate nested in Data)
+                            val playQueueData =
+                                data["Data"]?.jsonObject
+                                    ?: data["PlayQueueUpdate"]?.jsonObject
+                                    ?: data
                             handlePlayQueueUpdate(playQueueData)
                         } else {
                             Timber.w("⚠️ SyncPlayPlayQueueUpdate has no data")
@@ -1568,14 +1684,19 @@ class SyncPlayManager @Inject constructor(
         // Check for nested PlayQueue update (common in group updates)
         // The server sends PlayQueue in data["Data"] with format:
         // {"Reason":"SetCurrentItem", "Playlist":[...], "PlayingItemIndex":0, ...}
-        val nestedPlayQueueData = data["Data"]?.jsonObject
-        if (nestedPlayQueueData != null) {
-            Timber.i("🎵 Found nested Data field, checking for Playlist...")
-            if (nestedPlayQueueData["Playlist"] != null) {
-                Timber.i("🎵 Detected PlayQueue data in group update - processing playlist!")
-                handlePlayQueueUpdate(nestedPlayQueueData)
+        // BUT sometimes "Data" is just a string value like "Playing" or "Paused"
+        val nestedData = data["Data"]
+        if (nestedData != null) {
+            if (nestedData is JsonObject) {
+                Timber.i("🎵 Found nested Data field (object), checking for Playlist...")
+                if (nestedData["Playlist"] != null) {
+                    Timber.i("🎵 Detected PlayQueue data in group update - processing playlist!")
+                    handlePlayQueueUpdate(nestedData)
+                } else {
+                    Timber.i("🎵 Nested Data found but no Playlist field")
+                }
             } else {
-                Timber.i("🎵 Nested Data found but no Playlist field")
+                Timber.d("🎵 Nested Data field is not an object (it's ${nestedData::class.simpleName}), skipping")
             }
         } else {
             Timber.d("🎵 No nested Data field found")
@@ -1658,47 +1779,74 @@ class SyncPlayManager @Inject constructor(
         val reason = data["Reason"]?.jsonPrimitive?.content
         Timber.i("🎵 PlayQueue update reason: %s, full data keys: %s", reason, data.keys)
 
-        when (reason) {
-            "NewPlaylist", "SetCurrentItem" -> {
-                // Extract playlist items - server sends full playlist on SetCurrentItem
-                val playlist = data["Playlist"]?.jsonArray ?: data["PlayingQueue"]?.jsonArray
-                Timber.i("🎵 Playlist extracted: %s items", playlist?.size ?: 0)
-                
-                // Try multiple field names for compatibility
-                val playingItemPosition = data["PlayingItemPosition"]?.jsonPrimitive?.content?.toIntOrNull() 
-                    ?: data["PlayingItemIndex"]?.jsonPrimitive?.content?.toIntOrNull() 
-                    ?: data["playingItemIndex"]?.jsonPrimitive?.content?.toIntOrNull()
-                    ?: 0
-                val startPositionTicks = data["StartPositionTicks"]?.jsonPrimitive?.content?.toLongOrNull() 
-                    ?: data["startPositionTicks"]?.jsonPrimitive?.content?.toLongOrNull()
-                    ?: 0L
-                val startPositionMs = startPositionTicks / 10000L // Convert ticks to milliseconds
+        // Extract playlist items when present
+        val playlist = data["Playlist"]?.jsonArray ?: data["PlayingQueue"]?.jsonArray
+        if (playlist == null) {
+            Timber.d("PlayQueue update has no playlist (reason=%s)", reason)
+            return
+        }
 
-                Timber.i("🎵 Extracted: playingItemPosition=%d, startPositionTicks=%d, startPositionMs=%d", 
-                    playingItemPosition, startPositionTicks, startPositionMs)
+        Timber.i("🎵 Playlist extracted: %s items", playlist.size)
 
-                val itemIds = playlist?.mapNotNull { element ->
-                    val itemObj = element.jsonObject
-                    val itemId = itemObj["ItemId"]?.jsonPrimitive?.content
-                    Timber.d("🎵 Queue item: ItemId=%s", itemId)
-                    itemId?.let { parseUUID(it) }
-                } ?: emptyList()
+        // Try multiple field names for compatibility
+        val playingItemPosition = data["PlayingItemPosition"]?.jsonPrimitive?.content?.toIntOrNull()
+            ?: data["PlayingItemIndex"]?.jsonPrimitive?.content?.toIntOrNull()
+            ?: data["playingItemIndex"]?.jsonPrimitive?.content?.toIntOrNull()
+            ?: 0
+        val startPositionTicks = data["StartPositionTicks"]?.jsonPrimitive?.content?.toLongOrNull()
+            ?: data["startPositionTicks"]?.jsonPrimitive?.content?.toLongOrNull()
+            ?: 0L
+        val startPositionMs = startPositionTicks / 10000L // Convert ticks to milliseconds
 
-                if (itemIds.isNotEmpty()) {
-                    // Cache the playlist for future use
-                    lastReceivedPlaylist = itemIds
-                    lastReceivedPlaylistIndex = playingItemPosition
-                    lastReceivedPlaylistPositionMs = startPositionMs
-                    
-                    Timber.i("🎬 PlayQueue reason=%s: %d items, start at index %d, position %d ms", reason, itemIds.size, playingItemPosition, startPositionMs)
-                    Timber.i("🎬 First item ID: %s", itemIds.firstOrNull())
-                    _playbackCommands.value = SyncPlayCommand.Play(itemIds, startPositionMs, playingItemPosition)
-                    Timber.i("🎬✅ Emitted SyncPlayCommand.Play with %d items starting at index %d", itemIds.size, playingItemPosition)
-                } else {
-                    Timber.w("🎵 PlayQueue update but no items extracted")
-                }
+        Timber.i(
+            "🎵 Extracted: playingItemPosition=%d, startPositionTicks=%d, startPositionMs=%d",
+            playingItemPosition,
+            startPositionTicks,
+            startPositionMs,
+        )
+
+        val itemIds = playlist.mapNotNull { element ->
+            var itemId: String? = null
+            var playlistItemId: String? = null
+
+            val obj = element as? JsonObject
+            if (obj != null) {
+                itemId = obj["ItemId"]?.jsonPrimitive?.content
+                    ?: obj["Id"]?.jsonPrimitive?.content
+                playlistItemId = obj["PlaylistItemId"]?.jsonPrimitive?.content
+                    ?: obj["PlaylistId"]?.jsonPrimitive?.content
+            } else {
+                val prim = element as? JsonPrimitive
+                itemId = prim?.content
             }
-            else -> Timber.d("PlayQueue update reason not handled: %s", reason)
+
+            Timber.d("🎵 Queue item: ItemId=%s PlaylistItemId=%s", itemId, playlistItemId)
+
+            val itemUuid = itemId?.let { parseUUID(it) }
+            if (itemUuid != null && !playlistItemId.isNullOrBlank()) {
+                playlistItemIdByItemId[itemUuid] = playlistItemId.replace("-", "")
+            }
+            itemUuid
+        }
+
+        if (itemIds.isNotEmpty()) {
+            // Cache the playlist for future use
+            lastReceivedPlaylist = itemIds
+            lastReceivedPlaylistIndex = playingItemPosition
+            lastReceivedPlaylistPositionMs = startPositionMs
+
+            Timber.i(
+                "🎬 PlayQueue reason=%s: %d items, start at index %d, position %d ms",
+                reason,
+                itemIds.size,
+                playingItemPosition,
+                startPositionMs,
+            )
+            Timber.i("🎬 First item ID: %s", itemIds.firstOrNull())
+            _playbackCommands.value = SyncPlayCommand.Play(itemIds, startPositionMs, playingItemPosition)
+            Timber.i("🎬✅ Emitted SyncPlayCommand.Play with %d items starting at index %d", itemIds.size, playingItemPosition)
+        } else {
+            Timber.w("🎵 PlayQueue update but no items extracted")
         }
     }
 
@@ -1734,15 +1882,53 @@ class SyncPlayManager @Inject constructor(
         _currentGroupId.value = groupId
         _groupMembers.value = members
         _isSyncPlayActive.value = true
-        _syncPlayMessages.value = SyncPlayMessage.GroupJoined(groupId, members)
+        if (lastNotifiedGroupId != groupId) {
+            _syncPlayMessages.value = SyncPlayMessage.GroupJoined(groupId, members)
+            lastNotifiedGroupId = groupId
+        }
     }
 
     private fun applyGroupDto(group: GroupInfoDto) {
         val groupId = group.groupId.toJavaUuid()
+        val currentUserName = serverRepository.current.value?.user?.name
+        val oldParticipants = _groupMembers.value
+        val newParticipants = group.participants
+        
+        Timber.i("📊 applyGroupDto: old=${oldParticipants.size} participants (${oldParticipants.take(3).joinToString(",")}), new=${newParticipants.size} participants (${newParticipants.take(3).joinToString(",")})")
+        
         _currentGroupId.value = groupId
-        _groupMembers.value = group.participants
+        _groupMembers.value = newParticipants
         _isSyncPlayActive.value = true
-        _syncPlayMessages.value = SyncPlayMessage.GroupJoined(groupId, group.participants)
+        
+        // Notify when local user joins a new group
+        if (lastNotifiedGroupId != groupId) {
+            _syncPlayMessages.value = SyncPlayMessage.GroupJoined(groupId, newParticipants)
+            lastNotifiedGroupId = groupId
+        }
+        
+        // Detect users who joined (excluding the local user)
+        if (oldParticipants.isNotEmpty()) {
+            val joinedUsers = newParticipants.filterNot { it in oldParticipants }
+            joinedUsers.forEach { userName ->
+                if (userName != currentUserName) {
+                    Timber.i("👋 UserJoined event emitted: $userName")
+                    _syncPlayMessages.value = SyncPlayMessage.UserJoined(userName)
+                }
+            }
+            
+            // Detect users who left
+            val leftUsers = oldParticipants.filterNot { it in newParticipants }
+            leftUsers.forEach { userName ->
+                if (userName != currentUserName) {
+                    Timber.i("👋 UserLeft event emitted: $userName (not current user)")
+                    _syncPlayMessages.value = SyncPlayMessage.UserLeft(userName)
+                } else {
+                    Timber.w("👋 Current user in leftUsers list - ignoring")
+                }
+            }
+        } else {
+            Timber.d("📊 oldParticipants empty - skipping join/leave detection")
+        }
     }
 
     private fun startPollingGroups() {

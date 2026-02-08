@@ -126,6 +126,10 @@ fun HomePage(
             var dialog by remember { mutableStateOf<DialogParams?>(null) }
             var showPlaylistDialog by remember { mutableStateOf<UUID?>(null) }
             val playlistState by playlistViewModel.playlistState.observeAsState(PlaylistLoadingState.Pending)
+            
+            // Capture context and SyncPlayManager before lambda
+            val syncPlayManager = (context as? com.github.damontecres.wholphin.MainActivity)?.syncPlayManager
+            
             HomePageContent(
                 watchingRows + latestRows,
                 onClickItem = { position, item ->
@@ -163,7 +167,11 @@ fun HomePage(
                         )
                 },
                 onClickPlay = { _, item ->
-                    viewModel.navigationManager.navigateTo(Destination.Playback(item))
+                    viewModel.navigationManager.startPlayback(
+                        itemId = item.id,
+                        positionMs = item.resumeMs,
+                        syncPlayManager = syncPlayManager
+                    )
                 },
                 loadingState = refreshing,
                 showClock = preferences.appPreferences.interfacePreferences.showClock,

@@ -75,7 +75,7 @@ class SeriesViewModel
         api: ApiClient,
         @param:ApplicationContext val context: Context,
         val serverRepository: ServerRepository,
-        private val navigationManager: NavigationManager,
+        val navigationManager: NavigationManager,
         private val itemPlaybackRepository: ItemPlaybackRepository,
         private val themeSongPlayer: ThemeSongPlayer,
         private val favoriteWatchManager: FavoriteWatchManager,
@@ -408,7 +408,7 @@ class SeriesViewModel
         /**
          * Play whichever episode is next up for series or else the first episode
          */
-        fun playNextUp() {
+        fun playNextUp(syncPlayManager: com.github.damontecres.wholphin.services.SyncPlayManager?) {
             viewModelScope.launch(ExceptionHandler() + Dispatchers.IO) {
                 val result by api.tvShowsApi.getNextUp(seriesId = seriesId)
                 val nextUp =
@@ -420,7 +420,17 @@ class SeriesViewModel
                         .firstOrNull()
                 if (nextUp != null) {
                     withContext(Dispatchers.Main) {
-                        navigateTo(Destination.Playback(nextUp.id, 0L))
+                        // Check if in SyncPlay group
+                        // For TV shows, send Series ID to SetNewQueue (not episode ID)
+                        // Jellyfin SyncPlay works with Series/Movie items, not individual episodes
+                        val isSyncPlayActive = syncPlayManager?.isSyncPlayActive?.value == true
+                        if (isSyncPlayActive) {
+                            Timber.i("📺 TV Show SyncPlay: Sending Series ID %s for episode %s", seriesId, nextUp.id)
+                            startPlayback(seriesId, 0L, syncPlayManager)
+                        } else {
+                            // Normal playback: send episode ID
+                            startPlayback(nextUp.id, 0L, syncPlayManager)
+                        }
                     }
                 } else {
                     showToast(
@@ -435,6 +445,31 @@ class SeriesViewModel
         fun navigateTo(destination: Destination) {
             release()
             navigationManager.navigateTo(destination)
+        }
+
+        /**
+         * Start playback with SyncPlay awareness
+         * If in a SyncPlay group, calls SetNewQueue to start group playback
+         * Otherwise, navigates directly to playback screen
+         */
+        fun startPlayback(itemId: java.util.UUID, positionMs: Long, syncPlayManager: com.github.damontecres.wholphin.services.SyncPlayManager?) {
+            val isSyncPlayActive = syncPlayManager?.isSyncPlayActive?.value == true
+            val currentGroupId = syncPlayManager?.currentGroupId?.value
+            
+            if (isSyncPlayActive && currentGroupId != null && syncPlayManager != null) {
+                // Start SyncPlay group playback
+                timber.log.Timber.i("🎬 Starting group playback for SyncPlay: itemId=%s, position=%d ms", itemId, positionMs)
+                syncPlayManager.play(
+                    itemIds = listOf(itemId),
+                    startPositionMs = positionMs,
+                    startIndex = 0
+                )
+                // Navigation will happen when SyncPlayCommand.Play received via WebSocket/polling
+            } else {
+                // Normal playback (not in SyncPlay)
+                timber.log.Timber.i("▶️ Starting normal playback: itemId=%s, position=%d ms", itemId, positionMs)
+                navigateTo(Destination.Playback(itemId, positionMs))
+            }
         }
 
         val chosenStreams = MutableLiveData<ChosenStreams?>(null)

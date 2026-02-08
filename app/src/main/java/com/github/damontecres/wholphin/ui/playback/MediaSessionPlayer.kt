@@ -12,9 +12,19 @@ class MediaSessionPlayer(
     player: Player,
     private val controllerViewState: ControllerViewState,
     private val playbackPreferences: PlaybackPreferences,
+    private var shouldAllowPlay: () -> Boolean = { true },
 ) : ForwardingSimpleBasePlayer(player) {
+    
+    fun setShouldAllowPlay(callback: () -> Boolean) {
+        shouldAllowPlay = callback
+    }
+    
     override fun handleSetPlayWhenReady(playWhenReady: Boolean): ListenableFuture<*> {
-        Timber.v("handleSetPlayWhenReady: playWhenReady=$playWhenReady")
+        Timber.v("handleSetPlayWhenReady: playWhenReady=$playWhenReady, shouldAllowPlay=${shouldAllowPlay()}")
+        if (playWhenReady && !shouldAllowPlay()) {
+            Timber.i("⏸️ Blocking MediaSession play command - SyncPlay not ready")
+            return super.handleSetPlayWhenReady(false)
+        }
         if (!playWhenReady && player.isPlaying) {
             controllerViewState.showControls()
         } else if (playWhenReady) {

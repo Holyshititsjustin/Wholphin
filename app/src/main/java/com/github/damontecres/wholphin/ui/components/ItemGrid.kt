@@ -10,6 +10,7 @@ import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -21,6 +22,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.github.damontecres.wholphin.data.model.BaseItem
 import com.github.damontecres.wholphin.services.NavigationManager
+import com.github.damontecres.wholphin.services.SyncPlayManager
 import com.github.damontecres.wholphin.ui.AspectRatios
 import com.github.damontecres.wholphin.ui.cards.GridCard
 import com.github.damontecres.wholphin.ui.detail.CardGrid
@@ -41,6 +43,7 @@ import org.jellyfin.sdk.api.client.ApiClient
 import org.jellyfin.sdk.model.api.ItemSortBy
 import org.jellyfin.sdk.model.api.SortOrder
 import org.jellyfin.sdk.model.api.request.GetItemsRequest
+import java.util.UUID
 
 @HiltViewModel(assistedFactory = ItemGridViewModel.Factory::class)
 class ItemGridViewModel
@@ -80,6 +83,10 @@ class ItemGridViewModel
         fun navigateTo(destination: Destination) {
             navigationManager.navigateTo(destination)
         }
+
+        fun startPlayback(itemId: UUID, positionMs: Long, syncPlayManager: SyncPlayManager?) {
+            navigationManager.startPlayback(itemId, positionMs, syncPlayManager)
+        }
     }
 
 @Composable
@@ -109,6 +116,11 @@ fun ItemGrid(
             LaunchedEffect(Unit) {
                 focusRequester.tryRequestFocus()
             }
+            
+            // Capture SyncPlayManager before lambdas
+            val context = LocalContext.current
+            val syncPlayManager = (context as? com.github.damontecres.wholphin.MainActivity)?.syncPlayManager
+            
             Column(modifier = modifier) {
                 Text(
                     text = destination.title ?: destination.titleRes?.let { stringResource(it) } ?: "",
@@ -120,11 +132,20 @@ fun ItemGrid(
                 CardGrid(
                     pager = items,
                     onClickItem = { index: Int, item: BaseItem ->
-                        // TODO handle more types
-                        viewModel.navigateTo(Destination.Playback(item.id, 0))
+                        viewModel.startPlayback(
+                            itemId = item.id,
+                            positionMs = 0L,
+                            syncPlayManager = syncPlayManager
+                        )
                     },
                     onLongClickItem = { index: Int, item: BaseItem -> },
-                    onClickPlay = { _, item -> viewModel.navigateTo(Destination.Playback(item)) },
+                    onClickPlay = { _, item -> 
+                        viewModel.startPlayback(
+                            itemId = item.id,
+                            positionMs = item.resumeMs,
+                            syncPlayManager = syncPlayManager
+                        )
+                    },
                     letterPosition = { c: Char -> 0 },
                     gridFocusRequester = focusRequester,
                     showJumpButtons = false,

@@ -117,6 +117,9 @@ fun SeriesOverview(
     var showPlaylistDialog by remember { mutableStateOf<UUID?>(null) }
     val playlistState by playlistViewModel.playlistState.observeAsState(PlaylistLoadingState.Pending)
 
+    // Capture SyncPlayManager before lambda
+    val syncPlayManager = (context as? com.github.damontecres.wholphin.MainActivity)?.syncPlayManager
+
     var rowFocused by rememberInt()
 
     LaunchedEffect(episodes) {
@@ -306,11 +309,11 @@ fun SeriesOverview(
                             it.data.userData
                                 ?.playbackPositionTicks
                                 ?.ticks ?: Duration.ZERO
-                        viewModel.navigateTo(
-                            Destination.Playback(
-                                it.id,
-                                resumePosition.inWholeMilliseconds,
-                            ),
+                        
+                        viewModel.startPlayback(
+                            itemId = it.id,
+                            positionMs = resumePosition.inWholeMilliseconds,
+                            syncPlayManager = syncPlayManager
                         )
                     },
                     onLongClick = { ep ->
@@ -320,11 +323,11 @@ fun SeriesOverview(
                         rowFocused = EPISODE_ROW
                         episodeList?.getOrNull(position.episodeRowIndex)?.let {
                             viewModel.release()
-                            viewModel.navigateTo(
-                                Destination.Playback(
-                                    it.id,
-                                    resume.inWholeMilliseconds,
-                                ),
+                            
+                            viewModel.startPlayback(
+                                itemId = it.id,
+                                positionMs = resume.inWholeMilliseconds,
+                                syncPlayManager = syncPlayManager
                             )
                         }
                     },

@@ -938,6 +938,42 @@ sealed interface AppPreference<Pref, T> {
                 summaryOff = R.string.disabled,
             )
 
+        val SyncPlayUserJoinNotifications =
+            AppSwitchPreference<AppPreferences>(
+                title = R.string.syncplay_user_join_notifications,
+                defaultValue = false,
+                getter = { it.interfacePreferences.syncplayPreferences.notifyUserJoins },
+                setter = { prefs, value ->
+                    prefs.updateInterfacePreferences {
+                        syncplayPreferences =
+                            syncplayPreferences
+                                .toBuilder()
+                                .apply { notifyUserJoins = value }
+                                .build()
+                    }
+                },
+                summaryOn = R.string.enabled,
+                summaryOff = R.string.disabled,
+            )
+
+        val SyncPlayEnabledNotifications =
+            AppSwitchPreference<AppPreferences>(
+                title = R.string.syncplay_enabled_notifications,
+                defaultValue = false,
+                getter = { it.interfacePreferences.syncplayPreferences.notifySyncplayEnabled },
+                setter = { prefs, value ->
+                    prefs.updateInterfacePreferences {
+                        syncplayPreferences =
+                            syncplayPreferences
+                                .toBuilder()
+                                .apply { notifySyncplayEnabled = value }
+                                .build()
+                    }
+                },
+                summaryOn = R.string.enabled,
+                summaryOff = R.string.disabled,
+            )
+
         val SyncPlayThreshold =
             AppSliderPreference<AppPreferences>(
                 title = R.string.syncplay_sync_threshold,
@@ -1016,6 +1052,8 @@ val basicPreferences =
                     AppPreference.EnableSyncPlay,
                     AppPreference.AutoJoinLastGroup,
                     AppPreference.ShowSyncIndicator,
+                    AppPreference.SyncPlayUserJoinNotifications,
+                    AppPreference.SyncPlayEnabledNotifications,
                     AppPreference.SyncPlayThreshold,
                 ),
         ),

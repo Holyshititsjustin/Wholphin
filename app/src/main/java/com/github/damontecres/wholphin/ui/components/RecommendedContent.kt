@@ -147,6 +147,10 @@ fun RecommendedContent(
         }
 
         LoadingState.Success -> {
+            // Capture SyncPlayManager before lambdas
+            val context = LocalContext.current
+            val syncPlayManager = (context as? com.github.damontecres.wholphin.MainActivity)?.syncPlayManager
+            
             HomePageContent(
                 homeRows = rows,
                 onClickItem = { _, item ->
@@ -156,7 +160,11 @@ fun RecommendedContent(
                     moreDialog.makePresent(RowColumnItem(position, item))
                 },
                 onClickPlay = { _, item ->
-                    viewModel.navigationManager.navigateTo(Destination.Playback(item))
+                    viewModel.navigationManager.startPlayback(
+                        itemId = item.id,
+                        positionMs = item.resumeMs,
+                        syncPlayManager = syncPlayManager
+                    )
                 },
                 onFocusPosition = onFocusPosition,
                 showClock = preferences.appPreferences.interfacePreferences.showClock,

@@ -141,6 +141,8 @@ message SyncPlayPreferences {
   string last_group_id = 3;
   bool show_sync_indicator = 4;
   int32 sync_threshold_ms = 5; // Max drift before resyncing (default: 500ms)
+  bool notify_user_joins = 6;
+  bool notify_syncplay_enabled = 7;
 }
 
 enum BackdropStyle{

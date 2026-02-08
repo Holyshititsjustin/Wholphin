@@ -35,6 +35,7 @@ import androidx.navigation3.runtime.serialization.NavKeySerializer
 import androidx.navigation3.ui.NavDisplay
 import androidx.tv.material3.MaterialTheme
 import com.github.damontecres.wholphin.services.SyncPlayManager
+import com.github.damontecres.wholphin.services.SyncPlayMessage
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.transitionFactory
@@ -113,14 +114,20 @@ fun ApplicationContent(
         }
     }
     
-    // Global SyncPlay navigation handler: listen for Play commands and navigate via MainActivity SyncPlayManager
+    // Global SyncPlay notification handler: listen for all commands and show notifications everywhere
     if (syncPlayManager != null) {
         val globalSyncPlayCommand by syncPlayManager.playbackCommands.collectAsStateWithLifecycle()
+        val globalSyncPlayMessage by syncPlayManager.syncPlayMessages.collectAsStateWithLifecycle()
+        val groupState by syncPlayManager.groupState.collectAsStateWithLifecycle()
+        // Get current destination from backstack
+        val currentDestination = backStack.lastOrNull() as? Destination
+        val isOnPlaybackScreen = currentDestination is Destination.Playback
+        
         androidx.compose.runtime.LaunchedEffect(globalSyncPlayCommand) {
             when (val cmd = globalSyncPlayCommand) {
                 is com.github.damontecres.wholphin.services.SyncPlayCommand.Play -> {
                     val firstItemId = cmd.itemIds.getOrNull(cmd.startIndex) ?: cmd.itemIds.firstOrNull()
-                    Timber.i("🎬 Global SyncPlay Play received: items=%d startIndex=%d position=%d", cmd.itemIds.size, cmd.startIndex, cmd.startPositionMs)
+                    Timber.i("🎬 Global SyncPlay Play received: items=%d startIndex=%d position=%d groupState=%s", cmd.itemIds.size, cmd.startIndex, cmd.startPositionMs, groupState)
                     if (firstItemId != null) {
                         Timber.i("🎬 Navigating to playback item %s at %dms", firstItemId, cmd.startPositionMs)
                         navigationManager.navigateTo(
@@ -131,7 +138,110 @@ fun ApplicationContent(
                         )
                     }
                 }
-                else -> { /* no-op for other commands here */ }
+                is com.github.damontecres.wholphin.services.SyncPlayCommand.Pause -> {
+                    Timber.i("🎬 Global SyncPlay Pause: A group member paused playback")
+                    if (!isOnPlaybackScreen) {
+                        android.widget.Toast.makeText(
+                            context,
+                            "Group member paused",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+                is com.github.damontecres.wholphin.services.SyncPlayCommand.Unpause -> {
+                    Timber.i("🎬 Global SyncPlay Unpause: A group member resumed playback")
+                    if (!isOnPlaybackScreen) {
+                        android.widget.Toast.makeText(
+                            context,
+                            "Group member resumed",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+                is com.github.damontecres.wholphin.services.SyncPlayCommand.Seek -> {
+                    Timber.i("🎬 Global SyncPlay Seek: A group member seeked to %d ms", cmd.positionMs)
+                    if (!isOnPlaybackScreen) {
+                        android.widget.Toast.makeText(
+                            context,
+                            "Group member seeked",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+                is com.github.damontecres.wholphin.services.SyncPlayCommand.SetPlaybackRate -> {
+                    Timber.i("🎬 Global SyncPlay SetPlaybackRate: %.2fx", cmd.rate)
+                    if (!isOnPlaybackScreen) {
+                        android.widget.Toast.makeText(
+                            context,
+                            "Playback rate changed to %.2fx".format(cmd.rate),
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+                is com.github.damontecres.wholphin.services.SyncPlayCommand.Buffering -> {
+                    Timber.i("🎬 Global SyncPlay Buffering after seeking/starting")
+                    if (!isOnPlaybackScreen) {
+                        android.widget.Toast.makeText(
+                            context,
+                            "Group member buffering",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+                is com.github.damontecres.wholphin.services.SyncPlayCommand.Stop -> {
+                    Timber.i("🎬 Global SyncPlay Stop: Playback stopped")
+                    if (!isOnPlaybackScreen) {
+                        android.widget.Toast.makeText(
+                            context,
+                            "Playback stopped",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+                null -> {} // no command
+            }
+        }
+
+        // Global SyncPlay message handler: show informational toasts everywhere
+        androidx.compose.runtime.LaunchedEffect(globalSyncPlayMessage) {
+            when (globalSyncPlayMessage) {
+                is com.github.damontecres.wholphin.services.SyncPlayMessage.SyncPlayEnabled -> {
+                    if (preferences.appPreferences.interfacePreferences.syncplayPreferences.notifySyncplayEnabled) {
+                        val serverName = (globalSyncPlayMessage as com.github.damontecres.wholphin.services.SyncPlayMessage.SyncPlayEnabled).serverName
+                        val label = if (serverName.isNullOrBlank()) "SyncPlay enabled" else "SyncPlay enabled on $serverName"
+                        android.widget.Toast.makeText(context, label, android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+                is com.github.damontecres.wholphin.services.SyncPlayMessage.GroupJoined -> {
+                    android.widget.Toast.makeText(context, "Joined SyncPlay group", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                is com.github.damontecres.wholphin.services.SyncPlayMessage.UserJoined -> {
+                    if (preferences.appPreferences.interfacePreferences.syncplayPreferences.notifyUserJoins) {
+                        val userName = (globalSyncPlayMessage as com.github.damontecres.wholphin.services.SyncPlayMessage.UserJoined).userName
+                        android.widget.Toast.makeText(context, "👋 $userName joined SyncPlay", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+                is com.github.damontecres.wholphin.services.SyncPlayMessage.UserLeft -> {
+                    if (preferences.appPreferences.interfacePreferences.syncplayPreferences.notifyUserJoins) {
+                        val userName = (globalSyncPlayMessage as com.github.damontecres.wholphin.services.SyncPlayMessage.UserLeft).userName
+                        android.widget.Toast.makeText(context, "👋 $userName left SyncPlay", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+                is com.github.damontecres.wholphin.services.SyncPlayMessage.SyncPlayDisabled -> {
+                    if (preferences.appPreferences.interfacePreferences.syncplayPreferences.notifySyncplayEnabled) {
+                        android.widget.Toast.makeText(context, "SyncPlay disabled", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+                is com.github.damontecres.wholphin.services.SyncPlayMessage.GroupLeft -> {
+                    android.widget.Toast.makeText(context, "Left SyncPlay group", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                is com.github.damontecres.wholphin.services.SyncPlayMessage.CommandSent -> {
+                    val command = (globalSyncPlayMessage as com.github.damontecres.wholphin.services.SyncPlayMessage.CommandSent).command
+                    android.widget.Toast.makeText(context, "📤 $command", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                else -> {
+                    // Ignore other message types or null
+                }
             }
         }
     }

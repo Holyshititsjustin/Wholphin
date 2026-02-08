@@ -248,10 +248,31 @@ fun PlaybackPage(
             }
             
             val currentGroupId by syncPlayManager?.currentGroupId?.collectAsState() ?: remember { mutableStateOf(null) }
+            val groupState by syncPlayManager?.groupState?.collectAsState() ?: remember { mutableStateOf(null) }
+            
+            // Configure MediaSessionPlayer to block play commands when SyncPlay is not ready
+            LaunchedEffect(isSyncPlayActive, groupState) {
+                (player as? MediaSessionPlayer)?.setShouldAllowPlay {
+                    !isSyncPlayActive
+                }
+            }
+            
+            // CRITICAL: Prevent auto-play when group is in Waiting state (buffering coordination phase)
+            // This must run BEFORE player reaches STATE_READY to prevent premature playback
+            LaunchedEffect(isSyncPlayActive, groupState, playbackState) {
+                if (isSyncPlayActive && groupState != "Playing") {
+                    withContext(Dispatchers.Main.immediate) {
+                        if (player.playWhenReady) {
+                            Timber.i("⏸️ Group not in Playing state (state=$groupState) - preventing auto-play until group is ready")
+                            player.playWhenReady = false  // Prevent auto-play, wait for Unpause command
+                        }
+                    }
+                }
+            }
             
             // When media becomes ready and SyncPlay is active, notify server we're ready
             // This tells server this device has buffered and is ready for synchronized playback
-            LaunchedEffect(isSyncPlayActive, playbackState, currentPlayback) {
+            LaunchedEffect(isSyncPlayActive, playbackState, currentPlayback, groupState) {
                 val currentItemId = currentPlayback?.item?.id
                 if (
                     isSyncPlayActive &&
@@ -265,14 +286,23 @@ fun PlaybackPage(
                         val targetIndex = pendingPlay.startIndex
                         val targetItemId = pendingPlay.itemIds.getOrNull(targetIndex)
                         if (targetItemId == currentItemId) {
-                            Timber.i("🎬✅ Media ready with pending SyncPlay Play - starting playback now")
-                            if (player.currentPosition != pendingPlay.startPositionMs) {
-                                player.seekTo(pendingPlay.startPositionMs)
+                            // STRICT READY COORDINATION: Check group state before auto-playing
+                            if (groupState == "Waiting") {
+                                Timber.i("🎬⏳ Media ready but group in Waiting state - staying paused until all clients ready")
+                                // Don't start playback yet - wait for server's Unpause command
+                                // The pendingPlayCommand stays set so position can be corrected
+                            } else if (groupState == "Playing") {
+                                Timber.i("🎬✅ Media ready and group Playing - starting playback now")
+                                if (player.currentPosition != pendingPlay.startPositionMs) {
+                                    player.seekTo(pendingPlay.startPositionMs)
+                                }
+                                player.play()
+                                pendingPlayCommand = null
+                                lastReadyItemId = currentItemId
+                                return@LaunchedEffect
+                            } else {
+                                Timber.i("🎬❓ Media ready but group state is %s - staying paused until clear signal", groupState)
                             }
-                            player.play()
-                            pendingPlayCommand = null
-                            lastReadyItemId = currentItemId
-                            return@LaunchedEffect
                         }
                     }
 
@@ -283,7 +313,12 @@ fun PlaybackPage(
                         player.pause()
                     }
 
-                    Timber.i("🎬 Media ready! Reporting buffering complete for synchronized playback")
+                    Timber.i("🎬 Media ready! Reporting buffering complete - group state: %s", groupState)
+                    if (groupState == "Waiting") {
+                        Timber.i("⏳ Group in Waiting state - server will coordinate Ready across all clients")
+                    } else if (groupState == "Playing") {
+                        Timber.i("✅ Group already Playing - late joiner, will sync on Unpause command")
+                    }
                     syncPlayManager.reportBufferingComplete(currentItemId)
                     lastReadyItemId = currentItemId
                     
@@ -318,21 +353,25 @@ fun PlaybackPage(
             val isExecutingRemoteCommand by syncPlayManager?.isExecutingRemoteCommand?.collectAsState() ?: remember { mutableStateOf(false) }
             var previousIsPlaying by remember { mutableStateOf(isPlaying) }
             
-            LaunchedEffect(isSyncPlayActive, isPlaying, currentGroupId, isExecutingRemoteCommand) {
-                Timber.d("🔍 Local pause/play detection: isSyncPlayActive=$isSyncPlayActive, isPlaying=$isPlaying, previousIsPlaying=$previousIsPlaying, isExecutingRemoteCommand=$isExecutingRemoteCommand, groupId=$currentGroupId")
+            LaunchedEffect(isSyncPlayActive, isPlaying, playbackState, currentGroupId) {
+                val effectId = System.currentTimeMillis() // Unique ID for this effect execution
+                Timber.d("🔍 [$effectId] Local pause/play detection START: isSyncPlayActive=$isSyncPlayActive, isPlaying=$isPlaying, previousIsPlaying=$previousIsPlaying, playbackState=$playbackState, isExecutingRemoteCommand=$isExecutingRemoteCommand, groupId=$currentGroupId")
                 
                 if (isSyncPlayActive && currentGroupId != null && syncPlayManager != null && !isExecutingRemoteCommand) {
                     // Only send commands if this is a user-initiated change, not a remote command response
                     if (isPlaying != previousIsPlaying) {
                         val position = withContext(Dispatchers.Main.immediate) { player.currentPosition }
                         
-                        if (!isPlaying && previousIsPlaying) {
-                            // User paused locally - send to server
+                        if (!isPlaying && previousIsPlaying && playbackState != Player.STATE_ENDED) {
+                            // User paused locally - send to server (but NOT if media naturally ended)
                             Timber.i("🎬🔴 LOCAL PAUSE DETECTED at ${position}ms - sending Pause to SyncPlay group $currentGroupId")
                             syncPlayManager.pause()
+                        } else if (!isPlaying && previousIsPlaying && playbackState == Player.STATE_ENDED) {
+                            // Media finished naturally - let autoplay handler deal with next episode
+                            Timber.i("🎬⏹️ MEDIA FINISHED at ${position}ms (playbackState=$playbackState) - skipping pause send (will autoplay next)")
                         } else if (isPlaying && !previousIsPlaying) {
                             // User resumed locally - send to server
-                            Timber.i("🎬🟢 LOCAL UNPAUSE DETECTED at ${position}ms - sending Unpause to SyncPlay group $currentGroupId")
+                            Timber.i("🎬🟢 [$effectId] LOCAL UNPAUSE DETECTED at ${position}ms - sending Unpause to SyncPlay group $currentGroupId")
                             syncPlayManager.unpause()
                         }
                         previousIsPlaying = isPlaying
@@ -399,18 +438,17 @@ fun PlaybackPage(
                                 syncPlayManager.markCommandExecuted(command)
                             }
                             is com.github.damontecres.wholphin.services.SyncPlayCommand.Unpause -> {
-                                Timber.i("🎬🟢 PlaybackPage executing Unpause command: target position=${command.positionMs}ms")
+                                Timber.i("🎬🟢 PlaybackPage executing Unpause command: target position=${command.positionMs}ms - ALL CLIENTS READY")
                                 withContext(Dispatchers.Main.immediate) {
                                     val currentPos = player.currentPosition
                                     val drift = Math.abs(currentPos - command.positionMs)
                                     val driftTolerance = syncPlayManager.getDriftTolerance()
                                     Timber.d("🔍 Unpause: currentPos=${currentPos}ms, targetPos=${command.positionMs}ms, drift=${drift}ms, tolerance=${driftTolerance}ms, isPlaying=${player.isPlaying}")
                                     
-                                    // If already playing and drift is HUGE (> 1000ms), this is likely server spam
-                                    // with position=0. Don't seek - it would cause a restart. Just ensure playing.
-                                    if (player.isPlaying && drift > 1000) {
-                                        Timber.w("⚠️ Already playing with huge drift (${drift}ms) - ignoring Unpause position ${command.positionMs}ms to prevent restart loop (staying at ${currentPos}ms)")
-                                        // Don't seek, don't call play() - already playing
+                                    // If already playing and server sends a zero target, ignore to prevent restart loop.
+                                    val isZeroTarget = command.positionMs <= 0 && currentPos > 10_000
+                                    if (player.isPlaying && isZeroTarget) {
+                                        Timber.w("⚠️ Already playing with zero-target Unpause - ignoring to prevent restart loop (staying at ${currentPos}ms)")
                                     } else if (drift > driftTolerance) {
                                         // Normal drift correction when NOT already playing, or drift is reasonable
                                         Timber.i("⚠️⏱️ Position drift detected: ${currentPos}ms vs ${command.positionMs}ms (drift: ${drift}ms), seeking...")
@@ -427,6 +465,8 @@ fun PlaybackPage(
                                         Timber.d("✅ player.play() complete")
                                     }
                                 }
+                                // Clear pending play command - Unpause means all clients are ready and coordinated
+                                pendingPlayCommand = null
                                 syncPlayManager.markCommandExecuted(command)
                             }
                             is com.github.damontecres.wholphin.services.SyncPlayCommand.Seek -> {
@@ -825,14 +865,26 @@ fun PlaybackPage(
                         if (autoPlayEnabled) {
                             LaunchedEffect(Unit) {
                                 if (timeLeft == 0L) {
-                                    viewModel.playNextUp()
+                                        // Check if SyncPlay is active - coordinate with group if so
+                                        if (isSyncPlayActive && syncPlayManager != null) {
+                                            Timber.i("🎬 SyncPlay active: coordinating next episode playback via server")
+                                            syncPlayManager.play(listOf(UUID.fromString(it.id.toString())), 0, 0)
+                                        } else {
+                                            viewModel.playNextUp()
+                                        }
                                 } else {
                                     while (timeLeft > 0) {
                                         delay(1.seconds)
                                         timeLeft--
                                     }
                                     if (timeLeft == 0L && autoPlayEnabled) {
-                                        viewModel.playNextUp()
+                                            // Check if SyncPlay is active - coordinate with group if so
+                                            if (isSyncPlayActive && syncPlayManager != null) {
+                                                Timber.i("🎬 SyncPlay active: coordinating next episode playback via server")
+                                                syncPlayManager.play(listOf(UUID.fromString(it.id.toString())), 0, 0)
+                                            } else {
+                                                viewModel.playNextUp()
+                                            }
                                     }
                                 }
                             }
@@ -849,7 +901,13 @@ fun PlaybackPage(
                             onClick = {
                                 viewModel.reportInteraction()
                                 controllerViewState.hideControls()
-                                viewModel.playNextUp()
+                                    // Check if SyncPlay is active - coordinate with group if so
+                                    if (isSyncPlayActive && syncPlayManager != null) {
+                                        Timber.i("🎬 SyncPlay active: coordinating next episode playback via server (manual click)")
+                                        syncPlayManager.play(listOf(UUID.fromString(it.id.toString())), 0, 0)
+                                    } else {
+                                        viewModel.playNextUp()
+                                    }
                             },
                             timeLeft = if (autoPlayEnabled) timeLeft.seconds else null,
                             modifier =
