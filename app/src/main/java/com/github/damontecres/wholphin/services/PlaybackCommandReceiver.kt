@@ -78,6 +78,15 @@ class PlaybackCommandReceiver : BroadcastReceiver() {
                     }
                 }
             }
+            ACTION_CREATE_GROUP -> {
+                Timber.i("Executing CREATE_GROUP command")
+                val createIntent = Intent(context, MainActivity::class.java).apply {
+                    putExtra(MainActivity.INTENT_CREATE_SYNCPLAY_GROUP, true)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                }
+                context.startActivity(createIntent)
+                Timber.i("Started MainActivity to create SyncPlay group")
+            }
         }
     }
     companion object {
@@ -86,6 +95,7 @@ class PlaybackCommandReceiver : BroadcastReceiver() {
         const val ACTION_PLAY = "com.wholphin.PLAY"
         const val ACTION_SEEK = "com.wholphin.SEEK"
         const val ACTION_STOP = "com.wholphin.STOP"
+        const val ACTION_CREATE_GROUP = "com.wholphin.CREATE_GROUP"
         const val EXTRA_MEDIA_ID = "mediaId"
         const val EXTRA_POSITION_MS = "positionMs"
     }

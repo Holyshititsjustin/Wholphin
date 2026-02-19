@@ -93,6 +93,7 @@ fun ApplicationContent(
             NavBackStack(startDestination)
         }
     navigationManager.backStack = backStack
+    Timber.d("[NAV] navigationManager.backStack initialized: $backStack")
     val backdrop by viewModel.backdropService.backdropFlow.collectAsStateWithLifecycle()
     val backdropStyle = preferences.appPreferences.interfacePreferences.backdropStyle
     
@@ -118,24 +119,26 @@ fun ApplicationContent(
     if (syncPlayManager != null) {
         val globalSyncPlayCommand by syncPlayManager.playbackCommands.collectAsStateWithLifecycle()
         val globalSyncPlayMessage by syncPlayManager.syncPlayMessages.collectAsStateWithLifecycle()
-        val groupState by syncPlayManager.groupState.collectAsStateWithLifecycle()
         // Get current destination from backstack
         val currentDestination = backStack.lastOrNull() as? Destination
         val isOnPlaybackScreen = currentDestination is Destination.Playback
         
         androidx.compose.runtime.LaunchedEffect(globalSyncPlayCommand) {
+            Timber.d("[NAV] LaunchedEffect(globalSyncPlayCommand) fired: $globalSyncPlayCommand")
             when (val cmd = globalSyncPlayCommand) {
                 is com.github.damontecres.wholphin.services.SyncPlayCommand.Play -> {
                     val firstItemId = cmd.itemIds.getOrNull(cmd.startIndex) ?: cmd.itemIds.firstOrNull()
-                    Timber.i("🎬 Global SyncPlay Play received: items=%d startIndex=%d position=%d groupState=%s", cmd.itemIds.size, cmd.startIndex, cmd.startPositionMs, groupState)
+                    Timber.i("🎬 Global SyncPlay Play received: items=%d startIndex=%d position=%d", cmd.itemIds.size, cmd.startIndex, cmd.startPositionMs)
                     if (firstItemId != null) {
                         Timber.i("🎬 Navigating to playback item %s at %dms", firstItemId, cmd.startPositionMs)
+                        Timber.d("[NAV] Calling navigationManager.navigateTo(Destination.Playback) from ApplicationContent: itemId=%s, positionMs=%d", firstItemId, cmd.startPositionMs)
                         navigationManager.navigateTo(
                             Destination.Playback(
                                 itemId = firstItemId,
                                 positionMs = cmd.startPositionMs,
                             ),
                         )
+                        Timber.d("[NAV] navigationManager.backStack after navigateTo: ${navigationManager.backStack}")
                     }
                 }
                 is com.github.damontecres.wholphin.services.SyncPlayCommand.Pause -> {
@@ -178,26 +181,6 @@ fun ApplicationContent(
                         ).show()
                     }
                 }
-                is com.github.damontecres.wholphin.services.SyncPlayCommand.Buffering -> {
-                    Timber.i("🎬 Global SyncPlay Buffering after seeking/starting")
-                    if (!isOnPlaybackScreen) {
-                        android.widget.Toast.makeText(
-                            context,
-                            "Group member buffering",
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
-                    }
-                }
-                is com.github.damontecres.wholphin.services.SyncPlayCommand.Stop -> {
-                    Timber.i("🎬 Global SyncPlay Stop: Playback stopped")
-                    if (!isOnPlaybackScreen) {
-                        android.widget.Toast.makeText(
-                            context,
-                            "Playback stopped",
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
-                    }
-                }
                 null -> {} // no command
             }
         }
@@ -205,13 +188,6 @@ fun ApplicationContent(
         // Global SyncPlay message handler: show informational toasts everywhere
         androidx.compose.runtime.LaunchedEffect(globalSyncPlayMessage) {
             when (globalSyncPlayMessage) {
-                is com.github.damontecres.wholphin.services.SyncPlayMessage.SyncPlayEnabled -> {
-                    if (preferences.appPreferences.interfacePreferences.syncplayPreferences.notifySyncplayEnabled) {
-                        val serverName = (globalSyncPlayMessage as com.github.damontecres.wholphin.services.SyncPlayMessage.SyncPlayEnabled).serverName
-                        val label = if (serverName.isNullOrBlank()) "SyncPlay enabled" else "SyncPlay enabled on $serverName"
-                        android.widget.Toast.makeText(context, label, android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                }
                 is com.github.damontecres.wholphin.services.SyncPlayMessage.GroupJoined -> {
                     android.widget.Toast.makeText(context, "Joined SyncPlay group", android.widget.Toast.LENGTH_SHORT).show()
                 }
@@ -225,11 +201,6 @@ fun ApplicationContent(
                     if (preferences.appPreferences.interfacePreferences.syncplayPreferences.notifyUserJoins) {
                         val userName = (globalSyncPlayMessage as com.github.damontecres.wholphin.services.SyncPlayMessage.UserLeft).userName
                         android.widget.Toast.makeText(context, "👋 $userName left SyncPlay", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                }
-                is com.github.damontecres.wholphin.services.SyncPlayMessage.SyncPlayDisabled -> {
-                    if (preferences.appPreferences.interfacePreferences.syncplayPreferences.notifySyncplayEnabled) {
-                        android.widget.Toast.makeText(context, "SyncPlay disabled", android.widget.Toast.LENGTH_SHORT).show()
                     }
                 }
                 is com.github.damontecres.wholphin.services.SyncPlayMessage.GroupLeft -> {
@@ -374,6 +345,7 @@ fun ApplicationContent(
                 )
             }
         }
+        Timber.d("[NAV] Rendering NavDisplay with backStack: ${navigationManager.backStack}")
         NavDisplay(
             backStack = navigationManager.backStack,
             onBack = { navigationManager.goBack() },
@@ -383,6 +355,7 @@ fun ApplicationContent(
                     rememberViewModelStoreNavEntryDecorator(),
                 ),
             entryProvider = { key ->
+                Timber.d("[NAV] NavDisplay.entryProvider called for key: $key (backStack: ${navigationManager.backStack})")
                 key as Destination
                 val contentKey = "${key}_${server?.id}_${user?.id}"
                 NavEntry(key, contentKey = contentKey) {

@@ -155,6 +155,9 @@ class PlaybackViewModel
         val currentSegment = EqualityMutableLiveData<MediaSegmentDto?>(null)
         private val autoSkippedSegments = mutableSetOf<UUID>()
 
+        // SyncPlay buffering state tracking
+        private var isCurrentlyBuffering = false
+
         val subtitleCues = MutableLiveData<List<Cue>>(listOf())
 
         private lateinit var preferences: UserPreferences
@@ -200,6 +203,7 @@ class PlaybackViewModel
             destination: Destination,
             preferences: UserPreferences,
         ) {
+            Timber.i("[DIAG] PlaybackViewModel.init called with destination=$destination")
             nextUp.value = null
             this.preferences = preferences
             if (preferences.appPreferences.playbackPreferences.refreshRateSwitching) {
@@ -219,6 +223,7 @@ class PlaybackViewModel
                         positionMs = d.positionMs
                         itemPlayback = d.itemPlayback
                         forceTranscoding = d.forceTranscoding
+                        Timber.i("[DIAG] Destination.Playback: itemId=${d.itemId}, positionMs=$positionMs, forceTranscoding=$forceTranscoding")
                         d.itemId
                     }
 
@@ -226,6 +231,7 @@ class PlaybackViewModel
                         positionMs = 0
                         itemPlayback = null
                         forceTranscoding = false
+                        Timber.i("[DIAG] Destination.PlaybackList: itemId=${d.itemId}, startIndex=${d.startIndex}, shuffle=${d.shuffle}")
                         d.itemId
                     }
 
@@ -241,12 +247,15 @@ class PlaybackViewModel
                         "Error preparing for playback for $itemId",
                     ),
             ) {
+                Timber.i("[DIAG] Fetching item from userLibraryApi: itemId=$itemId")
                 val queriedItem = api.userLibraryApi.getItem(itemId).content
+                Timber.i("[DIAG] queriedItem.type=${queriedItem.type}, queriedItem.id=${queriedItem.id}")
                 val base =
                     if (queriedItem.type.playable) {
                         queriedItem
                     } else if (destination is Destination.PlaybackList) {
                         isPlaylist = true
+                        Timber.i("[DIAG] Creating playlist from queriedItem.id=${queriedItem.id}")
                         val playlistResult =
                             playlistCreator.createFrom(
                                 item = queriedItem,
@@ -258,11 +267,13 @@ class PlaybackViewModel
                             )
                         when (val r = playlistResult) {
                             is PlaylistCreationResult.Error -> {
+                                Timber.e("[DIAG] PlaylistCreationResult.Error: ${r.message}", r.ex)
                                 loading.setValueOnMain(LoadingState.Error(r.message, r.ex))
                                 return@launch
                             }
 
                             is PlaylistCreationResult.Success -> {
+                                Timber.i("[DIAG] PlaylistCreationResult.Success: items=${r.playlist.items.size}")
                                 if (r.playlist.items.isEmpty()) {
                                     showToast(context, "Playlist is empty", Toast.LENGTH_SHORT)
                                     navigationManager.goBack()
@@ -280,6 +291,7 @@ class PlaybackViewModel
                         throw IllegalArgumentException("Item is not playable and not PlaybackList: ${queriedItem.type}")
                     }
 
+                Timber.i("[DIAG] Starting MediaSession and playback for item.id=${base.id}")
                 val sessionPlayer =
                     MediaSessionPlayer(
                         player,
@@ -302,10 +314,12 @@ class PlaybackViewModel
                         forceTranscoding,
                     )
                 if (!played) {
+                    Timber.w("[DIAG] play() returned false, calling playNextUp()")
                     playNextUp()
                 }
 
                 if (!isPlaylist) {
+                    Timber.i("[DIAG] Not a playlist, attempting to create playlist from queriedItem.id=${queriedItem.id}")
                     val result = playlistCreator.createFrom(queriedItem)
                     if (result is PlaylistCreationResult.Success && result.playlist.items.isNotEmpty()) {
                         withContext(Dispatchers.Main) {
@@ -331,18 +345,21 @@ class PlaybackViewModel
             forceTranscoding: Boolean = this.forceTranscoding,
         ): Boolean =
             withContext(Dispatchers.IO) {
-                Timber.i("Playing ${item.id}")
+                Timber.i("[PlaybackViewModel] play() called for item=${item.id} at position=${positionMs}ms, forceTranscoding=$forceTranscoding")
 
                 // New item, so we can clear the media segment tracker & subtitle cues
+                Timber.d("[PlaybackViewModel] Resetting segment state and subtitle cues for item=${item.id}")
                 resetSegmentState()
                 this@PlaybackViewModel.subtitleCues.setValueOnMain(listOf())
 
                 viewModelScope.launchIO {
                     // Starting playback, so want to invalidate the last played timestamp for this item
+                    Timber.d("[PlaybackViewModel] Invalidating last played timestamp for item=${item.id}")
                     datePlayedService.invalidate(item)
                 }
 
                 if (item.type !in supportItemKinds) {
+                    Timber.w("[PlaybackViewModel] Item type not supported for playback: ${item.type}")
                     showToast(
                         context,
                         "Unsupported type '${item.type}', skipping...",
@@ -350,6 +367,7 @@ class PlaybackViewModel
                     )
                     return@withContext false
                 }
+                Timber.d("[PlaybackViewModel] Setting current item and itemId: ${item.id}")
                 this@PlaybackViewModel.item = item
                 this@PlaybackViewModel.itemId = item.id
 
@@ -361,7 +379,7 @@ class PlaybackViewModel
                     itemPlayback
                         ?: serverRepository.currentUser.value?.let { user ->
                             itemPlaybackDao.getItem(user, base.id)?.let {
-                                Timber.v("Fetched itemPlayback from DB: %s", it)
+                                Timber.v("[PlaybackViewModel] Fetched itemPlayback from DB: %s", it)
                                 if (it.sourceId != null) {
                                     it
                                 } else {
@@ -372,7 +390,9 @@ class PlaybackViewModel
                 val mediaSource = streamChoiceService.chooseSource(base, playbackConfig)
                 val plc = streamChoiceService.getPlaybackLanguageChoice(base)
 
+
                 if (mediaSource == null) {
+                    Timber.e("[PlaybackViewModel] No media sources found for item: ${base.id} (title: ${base.name}) in SyncPlay/playlist context. Item: $item")
                     showToast(
                         context,
                         "Item has no media sources, skipping...",
@@ -418,7 +438,8 @@ class PlaybackViewModel
                             prefs = preferences,
                         )?.index
 
-                Timber.d("Selected mediaSource=${mediaSource.id}, audioIndex=$audioIndex, subtitleIndex=$subtitleIndex")
+
+                Timber.d("[PlaybackViewModel] Selected mediaSource=${mediaSource.id}, audioIndex=$audioIndex, subtitleIndex=$subtitleIndex for item=${base.id} (title: ${base.name})")
 
                 val itemPlaybackToUse =
                     playbackConfig ?: ItemPlayback(
@@ -448,6 +469,7 @@ class PlaybackViewModel
 
                 val chapters = Chapter.fromDto(base, api)
                 withContext(Dispatchers.Main) {
+                    Timber.d("[PlaybackViewModel] Setting currentItemPlayback and updating media info for item=${base.id} (title: ${base.name})")
                     this@PlaybackViewModel.currentItemPlayback.value = itemPlaybackToUse
                     updateCurrentMedia {
                         CurrentMediaInfo(
@@ -458,6 +480,7 @@ class PlaybackViewModel
                         )
                     }
 
+                    Timber.d("[PlaybackViewModel] Calling changeStreams for item=${base.id} (title: ${base.name}), audioIndex=$audioIndex, subtitleIndex=$subtitleIndex, positionMs=$positionMs")
                     changeStreams(
                         item,
                         itemPlaybackToUse,
@@ -468,6 +491,7 @@ class PlaybackViewModel
                         enableDirectPlay = !forceTranscoding,
                         enableDirectStream = !forceTranscoding,
                     )
+                    Timber.d("[PlaybackViewModel] Calling player.prepare() and player.play() for item=${base.id} (title: ${base.name})")
                     player.prepare()
                     player.play()
                 }
@@ -869,6 +893,38 @@ class PlaybackViewModel
                         if (nextItem == null) {
                             navigationManager.goBack()
                         }
+                    }
+                }
+            }
+
+            // Handle SyncPlay buffering state changes
+            val syncPlayManager = (context as? com.github.damontecres.wholphin.MainActivity)?.syncPlayManager
+            if (syncPlayManager?.isSyncPlayActive?.value == true) {
+                when (playbackState) {
+                    Player.STATE_BUFFERING -> {
+                        // Report buffering to SyncPlay server when playback stalls
+                        val currentPositionTicks = player.currentPosition * 10000L // Convert ms to ticks
+                        val playlistItemId = itemId.toString()
+                        Timber.d("🎬⏸️ Player entered buffering state at position ${player.currentPosition}ms")
+                        syncPlayManager.reportBufferingStart()
+                        isCurrentlyBuffering = true
+                    }
+                    Player.STATE_READY -> {
+                        // Report ready state when buffering completes (drift correction)
+                        // CRITICAL FIX: Always report ready when entering STATE_READY, not just when exiting buffering
+                        // This ensures clients report ready status when media first loads
+                        val currentPositionTicks = player.currentPosition * 10000L // Convert ms to ticks
+                        val playlistItemId = itemId.toString()
+                        val isPlaying = player.isPlaying
+                        Timber.d("🎬▶️ Player entered ready state at position ${player.currentPosition}ms (playing: $isPlaying, wasBuffering: $isCurrentlyBuffering)")
+
+                        // Report ready status to server - this is critical for sync coordination
+                        viewModelScope.launch {
+                            syncPlayManager.reportBufferingDone(currentPositionTicks / 10000, isPlaying)
+                        }
+
+                        // Reset buffering flag
+                        isCurrentlyBuffering = false
                     }
                 }
             }

@@ -351,6 +351,14 @@ class MainActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         Timber.v("onNewIntent")
         setIntent(intent)
+        
+        // Handle SyncPlay group creation
+        if (intent.getBooleanExtra(INTENT_CREATE_SYNCPLAY_GROUP, false)) {
+            Timber.i("Received intent to create SyncPlay group")
+            syncPlayManager.createGroup()
+            return
+        }
+        
         extractDestination(intent)?.let {
             navigationManager.replace(it)
         }
@@ -404,6 +412,7 @@ class MainActivity : AppCompatActivity() {
         const val INTENT_SEASON_ID = "seaId"
         const val INTENT_START_PLAYBACK = "startPlayback"
         const val INTENT_POSITION_MS = "positionMs"
+        const val INTENT_CREATE_SYNCPLAY_GROUP = "createSyncPlayGroup"
     }
 }
 

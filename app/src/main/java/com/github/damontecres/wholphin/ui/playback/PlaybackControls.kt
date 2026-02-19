@@ -121,7 +121,6 @@ fun PlaybackControls(
     captionFocusRequester: FocusRequester,
     settingsFocusRequester: FocusRequester,
     onSeekProgress: (Long) -> Unit,
-    onExit: () -> Unit,
     showPlay: Boolean,
     previousEnabled: Boolean,
     nextEnabled: Boolean,
@@ -238,7 +237,6 @@ fun PlaybackControls(
                     settingsFocusRequester = settingsFocusRequester,
                     onControllerInteraction = onControllerInteraction,
                     onClickPlaybackDialogType = onClickPlaybackDialogType,
-                    onExit = onExit,
                     modifier = Modifier,
                 )
             }
@@ -345,7 +343,6 @@ fun RightPlaybackButtons(
     settingsFocusRequester: FocusRequester,
     onControllerInteraction: () -> Unit,
     onClickPlaybackDialogType: (PlaybackDialogType) -> Unit,
-    onExit: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -373,17 +370,6 @@ fun RightPlaybackButtons(
             enabled = true,
             onControllerInteraction = onControllerInteraction,
             modifier = Modifier.focusRequester(settingsFocusRequester),
-        )
-        // Exit/Back button
-        PlaybackButton(
-            enabled = true,
-            iconRes = R.drawable.baseline_undo_24,
-            onClick = {
-                onControllerInteraction.invoke()
-                onExit.invoke()
-            },
-            onControllerInteraction = onControllerInteraction,
-            modifier = Modifier,
         )
     }
 }

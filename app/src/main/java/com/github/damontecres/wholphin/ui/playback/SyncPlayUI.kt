@@ -18,6 +18,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import java.util.UUID
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -34,226 +38,90 @@ import com.github.damontecres.wholphin.services.SyncPlayMessage
 import com.github.damontecres.wholphin.ui.showToast
 import kotlinx.coroutines.launch
 import org.jellyfin.sdk.model.api.GroupInfoDto
+import timber.log.Timber
 
 @Composable
-fun SyncPlayDialog(
+fun SyncPlayGroupDialog(
     syncPlayManager: SyncPlayManager,
     onDismiss: () -> Unit,
-    preferences: com.github.damontecres.wholphin.preferences.UserPreferences? = null,
+    showDialog: Boolean = true,
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val isSyncPlayActive by syncPlayManager.isSyncPlayActive.collectAsState()
-    val currentGroupId by syncPlayManager.currentGroupId.collectAsState()
-    val groupMembers by syncPlayManager.groupMembers.collectAsState()
     val availableGroups by syncPlayManager.availableGroups.collectAsState()
-    val notifyUserJoins =
-        preferences?.appPreferences?.interfacePreferences?.syncplayPreferences?.notifyUserJoins == true
-    val notifySyncPlayEnabled =
-        preferences?.appPreferences?.interfacePreferences?.syncplayPreferences?.notifySyncplayEnabled == true
+    val selectedGroupIdState = remember { mutableStateOf<UUID?>(null) }
+    val isSyncPlayActive by syncPlayManager.isSyncPlayActive.collectAsState()
+    val groupMembers by syncPlayManager.groupMembers.collectAsState()
 
-    // Refresh groups when dialog opens to discover existing groups
-    LaunchedEffect(Unit) {
-        syncPlayManager.refreshGroups()
-    }
-
-    // Handle toast notifications for user joins and command sends
-    val syncPlayMessage by syncPlayManager.syncPlayMessages.collectAsState()
-    LaunchedEffect(syncPlayMessage) {
-        when (syncPlayMessage) {
-            is SyncPlayMessage.GroupJoined -> {
-                // Group joined toast now handled globally
+    LaunchedEffect(showDialog) {
+        if (showDialog) {
+            Timber.i("[DIAG] SyncPlayGroupDialog opened")
+            // Start periodic refresh
+            while (showDialog) {
+                syncPlayManager.refreshGroups()
+                Timber.i("[DIAG] SyncPlayGroupDialog periodic refresh triggered")
+                kotlinx.coroutines.delay(5000) // Refresh every 5 seconds
             }
-            is SyncPlayMessage.UserJoined -> {
-                // User joined toast now handled globally
-            }
-            is SyncPlayMessage.UserLeft -> {
-                // User left toast now handled globally
-            }
-            is SyncPlayMessage.GroupLeft -> {
-                // Group left toast now handled globally
-            }
-            is SyncPlayMessage.CommandSent -> {
-                // Command sent toast now handled globally
-            }
-            else -> {
-                // Other messages handled globally
-            }
+        } else {
+            Timber.i("[DIAG] SyncPlayGroupDialog closed")
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.8f)),
-        contentAlignment = Alignment.Center
-    ) {
-        Surface(
-            modifier = Modifier
-                .width(600.dp)
-                .padding(32.dp),
-            shape = MaterialTheme.shapes.medium
-        ) {
-            Column(
-                modifier = Modifier.padding(32.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Text(
-                    text = stringResource(R.string.syncplay_title),
-                    style = MaterialTheme.typography.headlineMedium
-                )
+    LaunchedEffect(syncPlayManager.playbackCommands) {
+        syncPlayManager.playbackCommands.collect { command ->
+            Timber.w("[DEBUG][UI] playbackCommands observer received: $command")
+        }
+    }
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                if (isSyncPlayActive) {
-                    // Already in a group
-                    Text(
-                        text = stringResource(R.string.syncplay_in_group),
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-
-                    Text(
-                        text = "${groupMembers.size} ${stringResource(R.string.syncplay_members)}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    // Display participant list
-                    if (groupMembers.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth(0.9f)
-                                .background(
-                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                    shape = MaterialTheme.shapes.small
-                                )
-                                .padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            groupMembers.forEach { member ->
-                                Text(
-                                    text = "• $member",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
+    Column(modifier = Modifier.padding(32.dp)) {
+        if (isSyncPlayActive) {
+            Text("SyncPlay Group Members:", style = MaterialTheme.typography.headlineMedium)
+            Spacer(modifier = Modifier.height(8.dp))
+            if (groupMembers.isEmpty()) {
+                Text("No members in group.")
+            } else {
+                LazyColumn {
+                    items(groupMembers) { member ->
+                        Text(member, modifier = Modifier.padding(8.dp))
                     }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(onClick = {
+                Timber.i("[DIAG] User requested leave group from UI")
+                syncPlayManager.leaveGroup()
+                onDismiss()
+            }) {
+                Text("Leave Group")
+            }
+        } else {
+            Text("Select a SyncPlay Group:", style = MaterialTheme.typography.headlineMedium)
+            Spacer(modifier = Modifier.height(8.dp))
+            LazyColumn {
+                items(availableGroups) { group ->
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp)
+                            .background(if (selectedGroupIdState.value == group.groupId) Color.LightGray else Color.Transparent)
+                            .clickable { selectedGroupIdState.value = group.groupId },
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Button(onClick = {
-                            syncPlayManager.pause()
-                        }) {
-                            Text("Pause")
-                        }
-
-                        Button(onClick = {
-                            syncPlayManager.unpause()
-                        }) {
-                            Text("Resume")
-                        }
-
-                        Button(onClick = {
-                            syncPlayManager.leaveGroup()
-                            onDismiss()
-                        }) {
-                            Text(stringResource(R.string.syncplay_leave_group))
-                        }
-                    }
-                } else {
-                    // Not in a group - show create/join options
-                    Text(
-                        text = stringResource(R.string.syncplay_description),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Button(
-                        onClick = {
-                            syncPlayManager.createGroup()
-                        },
-                        modifier = Modifier.fillMaxWidth(0.8f)
-                    ) {
-                        Text(stringResource(R.string.syncplay_create_group))
-                    }
-
-                    Text(
-                        text = stringResource(R.string.syncplay_or),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    if (availableGroups.isNotEmpty()) {
-                        Text(
-                            text = "Available Groups:",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        LazyColumn(
-                            modifier = Modifier
-                                .fillMaxWidth(0.9f)
-                                .height(200.dp)
-                                .background(
-                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                    shape = MaterialTheme.shapes.small
-                                )
-                                .padding(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            items(availableGroups) { group ->
-                                Button(
-                                    onClick = {
-                                        // Convert Jellyfin UUID to Java UUID for joining
-                                        val javaUuid = java.util.UUID.fromString(group.groupId.toString())
-                                        syncPlayManager.joinGroup(javaUuid)
-                                    },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Column(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalAlignment = Alignment.Start
-                                    ) {
-                                        Text(
-                                            text = "Group ${group.groupId}",
-                                            style = MaterialTheme.typography.bodyMedium
-                                        )
-                                        Text(
-                                            text = "${group.participants?.size ?: 0} members",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        Text(
-                            text = "No groups available",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Text(group.groupName, modifier = Modifier.weight(1f))
+                        Text("Members: ${group.participants.size}", modifier = Modifier.padding(start = 16.dp))
                     }
                 }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Button(onClick = onDismiss) {
-                    Text(stringResource(R.string.close))
-                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(onClick = {
+                selectedGroupIdState.value?.let { syncPlayManager.joinGroup(it) }
+                onDismiss()
+            }, enabled = selectedGroupIdState.value != null) {
+                Text("Join Selected Group")
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(onClick = onDismiss) {
+                Text("Cancel")
             }
         }
     }
@@ -290,7 +158,7 @@ fun SyncPlayManagementPage(
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val syncPlayManager = (context as? com.github.damontecres.wholphin.MainActivity)?.syncPlayManager
-        ?: return
+    if (syncPlayManager == null) return
 
     Column(
         modifier = modifier
@@ -299,10 +167,9 @@ fun SyncPlayManagementPage(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        SyncPlayDialog(
-            syncPlayManager = syncPlayManager,
-            onDismiss = {}, // Empty as we're on a full page
-            preferences = preferences,
+        SyncPlayGroupDialog(
+            syncPlayManager = syncPlayManager!!,
+            onDismiss = {} // Empty as we're on a full page
         )
     }
 }

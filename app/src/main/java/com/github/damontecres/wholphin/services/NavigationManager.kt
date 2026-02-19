@@ -67,8 +67,13 @@ class NavigationManager
          */
         fun goBack() {
             synchronized(this) {
+                Timber.d("Navigation: goBack() called, current backStack size: ${backStack.size}")
                 if (backStack.size > 1) {
-                    backStack.removeLastOrNull()
+                    val removed = backStack.removeLastOrNull()
+                    Timber.d("Navigation: Removed destination: $removed, new backStack size: ${backStack.size}")
+                    Timber.d("Navigation: Current destination: ${backStack.lastOrNull()}")
+                } else {
+                    Timber.w("Navigation: Cannot go back - backStack size is ${backStack.size}")
                 }
             }
             log()
